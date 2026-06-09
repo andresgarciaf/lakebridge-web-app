@@ -114,6 +114,11 @@ def cli_env() -> dict[str, str]:
     env["PATH"] = os.pathsep.join(
         [str(CLI_TARGET_DIR), str(Path(sys.executable).parent), env.get("PATH", "")]
     )
+    if _in_databricks_app():
+        # The Apps runtime sets DATABRICKS_TOKEN_AUDIENCE, which the SDK reads
+        # as github-oidc auth and rejects alongside the OAuth M2M credentials.
+        env.pop("DATABRICKS_TOKEN_AUDIENCE", None)
+        env.setdefault("DATABRICKS_AUTH_TYPE", "oauth-m2m")
     return env
 
 

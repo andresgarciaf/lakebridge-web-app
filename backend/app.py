@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -25,6 +26,12 @@ CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
 
 MAX_LOG_LINES = 1000
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _clean_line(line: str) -> str:
+    return ANSI_RE.sub("", line.rstrip())
+
 _state_lock = threading.Lock()
 _install_state: dict[str, Any] = {
     "status": "pending",
@@ -36,7 +43,7 @@ _install_started = False
 
 def _append_log(line: str) -> None:
     with _state_lock:
-        _install_state["logs"].append(line)
+        _install_state["logs"].append(_clean_line(line))
         del _install_state["logs"][:-MAX_LOG_LINES]
 
 
@@ -102,11 +109,13 @@ def _databricks_version() -> str:
 
 
 def _lakebridge_version() -> str:
-    if not CLI_PATH.exists():
+    version_file = Path.home() / ".databricks" / "labs" / "lakebridge" / "state" / "version.json"
+    try:
+        version = json.loads(version_file.read_text()).get("version", "")
+    except (OSError, ValueError):
         return ""
-    raw = _check_output([str(CLI_PATH), "labs", "show", "lakebridge"])
-    match = re.search(r"(\d+\.\d+\.\d+)", raw)
-    return match.group(1) if match else ""
+    match = re.search(r"(\d+\.\d+\.\d+)", version)
+    return match.group(1) if match else version
 
 
 def _workspace_host() -> str:
@@ -205,7 +214,7 @@ def run_command(command: str):
         assert proc.stdout is not None
         try:
             for line in iter(proc.stdout.readline, ""):
-                yield f"data: {line.rstrip()}\n\n"
+                yield f"data: {_clean_line(line)}\n\n"
         finally:
             proc.wait()
             yield f"event: end\ndata: {proc.returncode}\n\n"
