@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { FolderIcon } from '../Icons'
+import { FileUpload, ResultsPanel } from '../FileUpload'
 import { OutputPanel } from '../OutputPanel'
 import { useRun } from '../useRun'
+import { uploadFiles } from '../../runCommand'
 
 const SOURCE_DIALECTS = [
   'Select',
@@ -17,51 +18,47 @@ const SOURCE_DIALECTS = [
   'mysql',
   'postgresql',
 ]
-const TARGETS = ['Select', 'databricks']
-const TRANSPILERS = ['Select', 'morpheus', 'bladebridge']
 
 export function ConverterView() {
   const [sourceDialect, setSourceDialect] = useState(SOURCE_DIALECTS[0])
-  const [target, setTarget] = useState(TARGETS[0])
-  const [transpiler, setTranspiler] = useState(TRANSPILERS[0])
-  const [inputPath, setInputPath] = useState('')
-  const [outputPath, setOutputPath] = useState('')
-  const [openWhenDone, setOpenWhenDone] = useState(false)
+  const [files, setFiles] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [debug, setDebug] = useState(false)
-  const { lines, running, exitCode, start, reset } = useRun('converter')
+  const { lines, running, exitCode, results, start, reset } = useRun('converter')
 
-  const ready =
-    sourceDialect !== 'Select' &&
-    target !== 'Select' &&
-    transpiler !== 'Select' &&
-    inputPath.trim() &&
-    outputPath.trim()
+  const ready = sourceDialect !== 'Select' && files.length > 0
+  const busy = running || uploading
 
-  const handleStart = () => {
-    if (!ready) return
-    const args: string[] = [
-      '--source-dialect',
-      sourceDialect,
-      '--target',
-      target,
-      '--transpiler-config-path',
-      transpiler,
-      '--input-source',
-      inputPath.trim(),
-      '--output-folder',
-      outputPath.trim(),
-    ]
-    if (debug) args.push('--debug')
-    start(args)
+  const handleStart = async () => {
+    if (!ready || busy) return
+    setUploadError(null)
+    setUploading(true)
+    try {
+      const job = await uploadFiles(files)
+      const args = [
+        '--source-dialect',
+        sourceDialect,
+        '--input-source',
+        job.input_dir,
+        '--output-folder',
+        job.output_dir,
+        '--skip-validation',
+        'true',
+      ]
+      if (debug) args.push('--debug')
+      start(args, job.job_id)
+    } catch (err) {
+      setUploadError((err as Error).message)
+    } finally {
+      setUploading(false)
+    }
   }
 
   const handleReset = () => {
     setSourceDialect(SOURCE_DIALECTS[0])
-    setTarget(TARGETS[0])
-    setTranspiler(TRANSPILERS[0])
-    setInputPath('')
-    setOutputPath('')
-    setOpenWhenDone(false)
+    setFiles([])
+    setUploadError(null)
     setDebug(false)
     reset()
   }
@@ -70,29 +67,26 @@ export function ConverterView() {
     <div className="max-w-6xl">
       <h1 className="text-2xl font-semibold text-slate-900 mb-6">Select code to convert</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      <div className="mb-6">
         <Field label="Source Dialect">
           <Dropdown value={sourceDialect} options={SOURCE_DIALECTS} onChange={setSourceDialect} />
         </Field>
-        <Field label="Databricks Target">
-          <Dropdown value={target} options={TARGETS} onChange={setTarget} />
-        </Field>
-        <Field label="Transpiler">
-          <Dropdown value={transpiler} options={TRANSPILERS} onChange={setTranspiler} />
-        </Field>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
-        <PathField label="Input location" value={inputPath} onChange={setInputPath} />
-        <PathField label="Output location" value={outputPath} onChange={setOutputPath} />
+      <div className="mb-4">
+        <FileUpload files={files} onChange={setFiles} disabled={busy} />
+        <p className="mt-2 text-sm text-slate-500">
+          Converted Databricks code is written to the workspace under
+          <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">
+            /Shared/lakebridge-app/results
+          </code>
+          when the run finishes.
+        </p>
       </div>
 
-      <Checkbox
-        checked={openWhenDone}
-        onChange={setOpenWhenDone}
-        label="Open directory when converter is finished"
-      />
       <Checkbox checked={debug} onChange={setDebug} label="Show debug output" />
+
+      {uploadError && <p className="mt-3 text-sm text-red-600">{uploadError}</p>}
 
       <div className="flex justify-end items-center gap-4 mt-6">
         <button onClick={handleReset} className="text-sm text-[#1f6feb] hover:underline px-2 py-1">
@@ -100,13 +94,14 @@ export function ConverterView() {
         </button>
         <button
           onClick={handleStart}
-          disabled={!ready || running}
+          disabled={!ready || busy}
           className="px-5 py-2.5 rounded-md bg-[#1f6feb] text-white text-sm font-medium hover:bg-[#1a5ed1] disabled:bg-slate-300 disabled:cursor-not-allowed"
         >
-          {running ? 'Converting…' : 'Start Converting'}
+          {uploading ? 'Uploading…' : running ? 'Converting…' : 'Start Converting'}
         </button>
       </div>
 
+      <ResultsPanel results={results} />
       <OutputPanel lines={lines} running={running} exitCode={exitCode} />
     </div>
   )
@@ -131,7 +126,7 @@ function Dropdown({
   onChange: (v: string) => void
 }) {
   return (
-    <div className="relative w-full">
+    <div className="relative inline-block min-w-[220px]">
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -154,34 +149,6 @@ function Dropdown({
       >
         <path d="m6 9 6 6 6-6" />
       </svg>
-    </div>
-  )
-}
-
-function PathField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-}) {
-  return (
-    <div>
-      <label className="block text-sm font-medium text-slate-700 mb-2">{label}</label>
-      <div className="relative">
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Enter path or browse..."
-          className="w-full pl-3 pr-10 py-2.5 rounded-md border border-slate-300 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1f6feb]"
-        />
-        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
-          <FolderIcon />
-        </span>
-      </div>
     </div>
   )
 }

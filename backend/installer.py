@@ -33,7 +33,7 @@ def java_bin_dir() -> Path | None:
 def is_installed() -> bool:
     ok = MARKER_FILE.exists() and CLI_PATH.exists()
     if _in_databricks_app():
-        ok = ok and java_bin_dir() is not None
+        ok = ok and java_bin_dir() is not None and transpilers_installed()
     return ok
 
 
@@ -206,14 +206,9 @@ def _install_env() -> dict[str, str]:
     return env
 
 
-def install_lakebridge(log: Log) -> None:
-    log("Installing databricks labs lakebridge...")
-    env = cli_env()
-    if _in_databricks_app():
-        _write_python_shim(log)
-        env = _install_env()
+def _stream_cli(args: list[str], log: Log, env: dict[str, str], what: str) -> None:
     proc = subprocess.Popen(
-        [str(CLI_PATH), "labs", "install", "lakebridge"],
+        [str(CLI_PATH), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -225,8 +220,64 @@ def install_lakebridge(log: Log) -> None:
         log(line.rstrip())
     proc.wait()
     if proc.returncode != 0:
-        raise RuntimeError(f"lakebridge install exited with code {proc.returncode}")
+        raise RuntimeError(f"{what} exited with code {proc.returncode}")
+
+
+def _labs_env(log: Log) -> dict[str, str]:
+    env = cli_env()
+    if _in_databricks_app():
+        _write_python_shim(log)
+        env = _install_env()
+    return env
+
+
+def install_lakebridge(log: Log) -> None:
+    log("Installing databricks labs lakebridge...")
+    _stream_cli(["labs", "install", "lakebridge"], log, _labs_env(log), "lakebridge install")
     log("Lakebridge installed.")
+
+
+def transpilers_installed() -> bool:
+    d = Path.home() / ".databricks" / "labs" / "remorph-transpilers"
+    return all(
+        (d / t / "state" / "version.json").exists()
+        for t in ("databricks-morph-plugin", "bladebridge")
+    )
+
+
+def _write_ensurepip_shim() -> Path:
+    # Debian strips ensurepip's bundled wheels from the system python, so
+    # `python -m ensurepip` fails in any venv chained to it. BladeBridge's
+    # installer calls exactly that; shadow ensurepip via PYTHONPATH with a
+    # module that bootstraps pip using uv instead.
+    uv = shutil.which("uv") or "uv"
+    pkg = MARKER_DIR / "shims" / "ensurepip"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "__main__.py").write_text(
+        "import subprocess\n"
+        "import sys\n"
+        f'subprocess.run(["{uv}", "pip", "install", "--quiet", "--python", '
+        'sys.executable, "pip"], check=True)\n'
+    )
+    return pkg.parent
+
+
+def install_transpilers(log: Log) -> None:
+    log("Installing transpilers (morpheus, bladebridge)...")
+    env = _labs_env(log)
+    if _in_databricks_app():
+        shim_dir = _write_ensurepip_shim()
+        env["PYTHONPATH"] = os.pathsep.join(
+            filter(None, [str(shim_dir), env.get("PYTHONPATH", "")])
+        )
+    _stream_cli(
+        ["labs", "lakebridge", "install-transpile", "--interactive", "false"],
+        log,
+        env,
+        "install-transpile",
+    )
+    log("Transpilers installed.")
 
 
 def _lakebridge_installed() -> bool:
@@ -246,5 +297,9 @@ def ensure_installed(log: Log) -> None:
         log("Lakebridge already installed.")
     else:
         install_lakebridge(log)
+    if transpilers_installed():
+        log("Transpilers already installed.")
+    else:
+        install_transpilers(log)
     MARKER_FILE.write_text("ok\n")
     log("Setup complete.")

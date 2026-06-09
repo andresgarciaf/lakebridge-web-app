@@ -16,7 +16,7 @@ export function Layout({ view, env, onNavigate, children }: Props) {
     <div className="min-h-screen flex flex-col bg-white">
       <Header env={env} />
       <div className="flex flex-1 min-h-0">
-        <Sidebar active={view} onSelect={onNavigate} />
+        {view !== 'home' && <Sidebar active={view} onSelect={onNavigate} />}
         <main className="flex-1 flex flex-col min-w-0 bg-white">
           <div className="flex-1 p-6">{children}</div>
           <EnvFooter env={env} />

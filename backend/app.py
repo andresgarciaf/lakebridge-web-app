@@ -5,12 +5,14 @@ import re
 import subprocess
 import sys
 import threading
+import uuid
 from configparser import ConfigParser
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 
 from .installer import CLI_PATH, cli_env, ensure_installed, is_installed
 
@@ -23,6 +25,11 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 app = Flask(__name__, static_folder=None)
 # CORS is only needed for the Vite dev server; in production the SPA is same-origin.
 CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+
+JOBS_DIR = Path.home() / ".lakebridge-app" / "jobs"
+RESULTS_WORKSPACE_DIR = "/Shared/lakebridge-app/results"
+JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 
 MAX_LOG_LINES = 1000
 
@@ -156,6 +163,30 @@ def status():
         )
 
 
+@app.get("/api/diagnostics")
+def diagnostics():
+    labs_venv = Path.home() / ".databricks" / "labs" / "lakebridge" / "state" / "venv"
+    transpilers_dir = Path.home() / ".databricks" / "labs" / "remorph-transpilers"
+    return jsonify(
+        {
+            "sys_executable": sys.executable,
+            "sys_version": sys.version,
+            "base_executable": getattr(sys, "_base_executable", None),
+            "ensurepip_available": bool(__import__("importlib.util").util.find_spec("ensurepip")),
+            "labs_venv_cfg": (
+                (labs_venv / "pyvenv.cfg").read_text()
+                if (labs_venv / "pyvenv.cfg").exists()
+                else None
+            ),
+            "transpilers": (
+                sorted(p.name for p in transpilers_dir.iterdir())
+                if transpilers_dir.is_dir()
+                else []
+            ),
+        }
+    )
+
+
 @app.get("/api/env")
 def env_info():
     return jsonify(
@@ -187,6 +218,71 @@ BASE_COMMANDS = {
 }
 
 
+@app.post("/api/upload")
+def upload():
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "no files provided"}), 400
+    job_id = uuid.uuid4().hex[:12]
+    input_dir = JOBS_DIR / job_id / "input"
+    output_dir = JOBS_DIR / job_id / "output"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for f in files:
+        name = secure_filename(f.filename or "")
+        if not name:
+            continue
+        f.save(input_dir / name)
+        saved.append(name)
+    if not saved:
+        return jsonify({"error": "no valid filenames"}), 400
+    return jsonify(
+        {
+            "job_id": job_id,
+            "input_dir": str(input_dir),
+            "output_dir": str(output_dir),
+            "files": saved,
+        }
+    )
+
+
+def _workspace_cli(args: list[str]) -> None:
+    proc = subprocess.run(
+        [str(CLI_PATH), *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=cli_env(),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout).strip())
+
+
+def _export_results(job_id: str) -> dict[str, Any] | None:
+    output_dir = JOBS_DIR / job_id / "output"
+    files = sorted(p for p in output_dir.rglob("*") if p.is_file())
+    if not files:
+        return None
+    ws_dir = f"{RESULTS_WORKSPACE_DIR}/{job_id}"
+    _workspace_cli(["workspace", "mkdirs", ws_dir])
+    exported = []
+    for path in files:
+        target = f"{ws_dir}/{path.relative_to(output_dir)}".replace("//", "/")
+        parent = target.rsplit("/", 1)[0]
+        if parent != ws_dir:
+            _workspace_cli(["workspace", "mkdirs", parent])
+        _workspace_cli(
+            ["workspace", "import", target, "--file", str(path), "--format", "AUTO", "--overwrite"]
+        )
+        exported.append(target)
+    return {
+        "workspace_dir": ws_dir,
+        "files": exported,
+        "url": f"https://{_workspace_host()}/#workspace{ws_dir}",
+    }
+
+
 @app.post("/api/run/<command>")
 def run_command(command: str):
     if command not in BASE_COMMANDS:
@@ -198,6 +294,9 @@ def run_command(command: str):
     extra_args = body.get("args") or []
     if not isinstance(extra_args, list) or not all(isinstance(a, str) for a in extra_args):
         return jsonify({"error": "args must be a list of strings"}), 400
+    job_id = body.get("job_id")
+    if job_id is not None and not (isinstance(job_id, str) and JOB_ID_RE.match(job_id)):
+        return jsonify({"error": "invalid job_id"}), 400
 
     full_args = [*BASE_COMMANDS[command], *extra_args]
     env = cli_env()
@@ -217,6 +316,17 @@ def run_command(command: str):
                 yield f"data: {_clean_line(line)}\n\n"
         finally:
             proc.wait()
+            if job_id and proc.returncode == 0:
+                try:
+                    results = _export_results(job_id)
+                except Exception as exc:  # noqa: BLE001
+                    yield f"data: Failed to export results to workspace: {exc}\n\n"
+                else:
+                    if results:
+                        yield f"data: Results exported to {results['workspace_dir']}\n\n"
+                        yield f"event: results\ndata: {json.dumps(results)}\n\n"
+                    else:
+                        yield "data: No output files produced.\n\n"
             yield f"event: end\ndata: {proc.returncode}\n\n"
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream")

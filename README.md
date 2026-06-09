@@ -82,6 +82,19 @@ Python app: it installs `requirements.txt` and runs the gunicorn command from
 
 - `GET  /api/status` — install status + last 500 log lines (first call kicks off the install)
 - `GET  /api/env`    — python / java / databricks / lakebridge versions + host
+- `POST /api/upload` — multipart `files`; saves to a per-job input dir and
+  returns `{job_id, input_dir, output_dir, files}`
 - `POST /api/run/<profiler|analyzer|converter>` — runs the matching
-  `databricks labs lakebridge` command. Body: `{"args": ["--flag", "value"]}`.
-  Streams stdout as Server-Sent Events.
+  `databricks labs lakebridge` command. Body: `{"args": [...], "job_id": "..."}`.
+  Streams stdout as Server-Sent Events; when a `job_id` is given and the run
+  succeeds, files in the job output dir are exported to
+  `/Shared/lakebridge-app/results/<job_id>` in the workspace and an
+  `event: results` SSE event carries the workspace paths.
+
+## Container setup (first use)
+
+On the first `/api/status` call inside the Apps container the backend installs,
+in order: the Databricks CLI (from vendored split parts, see `make fetch-cli`),
+a Temurin JRE 17 (vendored via `make fetch-jre`, required by the Morpheus
+transpiler), lakebridge itself, and the transpilers
+(`install-transpile --interactive false`).

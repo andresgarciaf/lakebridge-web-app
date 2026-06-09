@@ -46,6 +46,31 @@ def test_run_rejects_non_string_args(client, monkeypatch):
     assert resp.status_code == 400
 
 
+def test_run_rejects_invalid_job_id(client, monkeypatch):
+    monkeypatch.setattr(app_module, "is_installed", lambda: True)
+    resp = client.post("/api/run/analyzer", json={"args": [], "job_id": "../../etc"})
+    assert resp.status_code == 400
+
+
+def test_upload_saves_files(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path)
+    resp = client.post(
+        "/api/upload",
+        data={"files": [(io.BytesIO(b"SELECT 1;"), "query.sql")]},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["files"] == ["query.sql"]
+    assert (tmp_path / data["job_id"] / "input" / "query.sql").read_bytes() == b"SELECT 1;"
+    assert (tmp_path / data["job_id"] / "output").is_dir()
+
+
+def test_upload_without_files_400(client):
+    resp = client.post("/api/upload", data={}, content_type="multipart/form-data")
+    assert resp.status_code == 400
+
+
 def test_install_cli_reassembles_bundled_parts(monkeypatch, tmp_path):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
