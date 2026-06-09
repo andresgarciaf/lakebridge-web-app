@@ -1,0 +1,23 @@
+[project]
+name = "lakebridge-app"
+version = "0.1.0"
+description = "Lakebridge UI — Vite/React frontend + Flask backend that installs the Databricks CLI and lakebridge labs project on first run."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "flask-cors>=4.0",
+    "gunicorn>=21.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

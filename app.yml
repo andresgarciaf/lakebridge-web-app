@@ -1,0 +1,12 @@
+# Single worker: install state lives in-process; threads handle SSE streams.
+command:
+  - gunicorn
+  - backend.app:app
+  - --bind
+  - 0.0.0.0:$DATABRICKS_APP_PORT
+  - --workers
+  - "1"
+  - --threads
+  - "8"
+  - --timeout
+  - "600"

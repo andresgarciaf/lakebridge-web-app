@@ -1,0 +1,69 @@
+bundle:
+  name: lakebridge-app
+
+# The frontend is built locally before deploy (make build); only frontend/dist
+# is uploaded. Node manifests are excluded so the Apps runtime treats this as a
+# Python app and installs requirements.txt without running npm.
+sync:
+  include:
+    - "frontend/dist/**"
+    - "vendor/**"
+  exclude:
+    - ".venv"
+    - "**/__pycache__"
+    - "**/.pytest_cache"
+    - "**/.ruff_cache"
+    - "**/.mypy_cache"
+    - "**/*.pyc"
+    - "node_modules"
+    - "package.json"
+    - "package-lock.json"
+    - "frontend/src"
+    - "frontend/public"
+    - "frontend/index.html"
+    - "frontend/tsconfig.json"
+    - "frontend/vite.config.ts"
+    - "frontend/node_modules"
+    - "frontend/.vite"
+    - "tests"
+    - "conftest.py"
+    - "Makefile"
+    - "uv.lock"
+    - "pyproject.toml"
+    - ".git"
+    - ".github"
+    - ".vscode"
+    - ".idea"
+    - ".DS_Store"
+
+variables:
+  app_name:
+    description: Name of the Databricks App resource (dev mode adds a prefix; keep short, 30-char limit).
+    default: lakebridge
+
+resources:
+  apps:
+    lakebridge:
+      name: ${var.app_name}
+      description: "Lakebridge UI — Vite/React frontend + Flask backend."
+      source_code_path: ${workspace.file_path}
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-522548490841242.2.azuredatabricks.net/
+
+  prod:
+    mode: production
+    workspace:
+      host: https://adb-522548490841242.2.azuredatabricks.net/
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    resources:
+      apps:
+        lakebridge:
+          name: ${var.app_name}
+          permissions:
+            - level: CAN_USE
+              group_name: users
