@@ -71,6 +71,33 @@ def test_upload_without_files_400(client):
     assert resp.status_code == 400
 
 
+def test_profiler_configure_writes_credentials(client, monkeypatch, tmp_path):
+    cred = tmp_path / ".credentials.yml"
+    monkeypatch.setattr(app_module, "CRED_FILE", cred)
+    resp = client.post(
+        "/api/profiler/configure",
+        json={
+            "source": "mssql",
+            "server": "db.example.com",
+            "port": "1433",
+            "user": "sa",
+            "password": "secret",
+        },
+    )
+    assert resp.status_code == 200
+    import yaml
+
+    data = yaml.safe_load(cred.read_text())
+    assert data["mssql"]["server"] == "db.example.com"
+    assert data["mssql"]["port"] == 1433
+    assert data["mssql"]["driver"] == "ODBC Driver 18 for SQL Server"
+
+
+def test_profiler_configure_rejects_unknown_source(client):
+    resp = client.post("/api/profiler/configure", json={"source": "oracle"})
+    assert resp.status_code == 400
+
+
 def test_install_cli_reassembles_bundled_parts(monkeypatch, tmp_path):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

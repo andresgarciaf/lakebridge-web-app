@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Callable
 
 MARKER_DIR = Path.home() / ".lakebridge-app"
-MARKER_FILE = MARKER_DIR / "installed"
+# Bump the marker suffix to force a one-time re-run of setup on containers
+# that completed an older setup (each step self-skips when already done).
+MARKER_FILE = MARKER_DIR / "installed-v3"
 CLI_TARGET_DIR = Path.home() / "bin"
 CLI_PATH = CLI_TARGET_DIR / ("databricks.exe" if platform.system() == "Windows" else "databricks")
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
@@ -245,55 +247,67 @@ def transpilers_installed() -> bool:
     )
 
 
-_ENSUREPIP_LINE = (
-    '        install_pip_cmd = [venv_context.env_exec_cmd, "-m", "ensurepip", "--upgrade"]'
-)
-
-
-def _patch_ensurepip(log: Log) -> None:
+def _lib_patches(uv: str) -> list[tuple[str, str, str]]:
     # Debian strips ensurepip's bundled wheels from the system python, so
-    # `python -m ensurepip` fails in any venv chained to it. BladeBridge's
-    # installer calls exactly that; rewrite the bootstrap command to use uv,
-    # which installs pip without ensurepip.
-    installers_py = (
-        Path.home()
-        / ".databricks"
-        / "labs"
-        / "lakebridge"
-        / "lib"
-        / "src"
-        / "databricks"
-        / "labs"
-        / "lakebridge"
-        / "transpiler"
-        / "installers.py"
+    # `python -m ensurepip` (and EnvBuilder(with_pip=True)) fails in any venv
+    # chained to it. Rewrite lakebridge's two pip bootstrap sites to use uv.
+    return [
+        (
+            "transpiler/installers.py",
+            '        install_pip_cmd = [venv_context.env_exec_cmd, "-m", "ensurepip", "--upgrade"]',
+            f'        install_pip_cmd = ["{uv}", "pip", "install", '
+            '"--python", str(venv_context.env_exec_cmd), "pip"]',
+        ),
+        (
+            "assessments/pipeline.py",
+            "        builder = venv.EnvBuilder(with_pip=True, symlinks=use_symlinks)\n"
+            "        builder.create(venv_path)\n"
+            "        context = builder.ensure_directories(venv_path)\n",
+            "        builder = venv.EnvBuilder(with_pip=False, symlinks=use_symlinks)\n"
+            "        builder.create(venv_path)\n"
+            "        context = builder.ensure_directories(venv_path)\n"
+            f'        __import__("subprocess").run(["{uv}", "pip", "install", "--quiet", '
+            '"--python", str(context.env_exec_cmd), "pip"], check=True)\n',
+        ),
+    ]
+
+
+def patch_lakebridge_lib(log: Log) -> None:
+    lib_root = (
+        Path.home() / ".databricks" / "labs" / "lakebridge" / "lib" / "src"
+        / "databricks" / "labs" / "lakebridge"
     )
-    if not installers_py.exists():
-        log("WARNING: installers.py not found; skipping ensurepip patch.")
-        return
-    source = installers_py.read_text()
-    if "uv" in source.split("_ensure_pip", 1)[-1][:600]:
-        log("ensurepip patch already applied.")
-        return
-    if _ENSUREPIP_LINE not in source:
-        log("WARNING: ensurepip call site not found; lakebridge layout may have changed.")
-        return
     uv = shutil.which("uv") or "uv"
-    replacement = (
-        f'        install_pip_cmd = ["{uv}", "pip", "install", '
-        '"--python", str(venv_context.env_exec_cmd), "pip"]'
-    )
-    installers_py.write_text(source.replace(_ENSUREPIP_LINE, replacement))
-    log("Patched lakebridge _ensure_pip to bootstrap pip via uv.")
+    for rel_path, old, new in _lib_patches(uv):
+        target = lib_root / rel_path
+        if not target.exists():
+            log(f"WARNING: {rel_path} not found; skipping patch.")
+            continue
+        source = target.read_text()
+        if new in source:
+            continue
+        if old not in source:
+            log(f"WARNING: patch site not found in {rel_path}; lakebridge layout may have changed.")
+            continue
+        target.write_text(source.replace(old, new))
+        log(f"Patched {rel_path} to bootstrap pip via uv.")
 
 
 def install_transpilers(log: Log) -> None:
-    log("Installing transpilers (morpheus, bladebridge)...")
+    log("Installing transpilers (morpheus, bladebridge, switch)...")
     env = _labs_env(log)
     if _in_databricks_app():
-        _patch_ensurepip(log)
+        patch_lakebridge_lib(log)
     _stream_cli(
-        ["labs", "lakebridge", "install-transpile", "--interactive", "false"],
+        [
+            "labs",
+            "lakebridge",
+            "install-transpile",
+            "--interactive",
+            "false",
+            "--include-llm-transpiler",
+            "true",
+        ],
         log,
         env,
         "install-transpile",
@@ -318,9 +332,8 @@ def ensure_installed(log: Log) -> None:
         log("Lakebridge already installed.")
     else:
         install_lakebridge(log)
-    if transpilers_installed():
-        log("Transpilers already installed.")
-    else:
-        install_transpilers(log)
+    # Always run: install-transpile self-skips installed transpilers and is
+    # the only step that knows whether the Switch workspace job exists.
+    install_transpilers(log)
     MARKER_FILE.write_text("ok\n")
     log("Setup complete.")

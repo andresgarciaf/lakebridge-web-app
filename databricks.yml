@@ -28,8 +28,6 @@ sync:
     - "tests"
     - "conftest.py"
     - "Makefile"
-    - "uv.lock"
-    - "pyproject.toml"
     - ".git"
     - ".github"
     - ".vscode"

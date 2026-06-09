@@ -10,6 +10,7 @@ from configparser import ConfigParser
 from pathlib import Path
 from typing import Any
 
+import yaml
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -30,6 +31,8 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 JOBS_DIR = Path.home() / ".lakebridge-app" / "jobs"
 RESULTS_WORKSPACE_DIR = "/Shared/lakebridge-app/results"
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+CRED_FILE = Path.home() / ".databricks" / "labs" / "lakebridge" / ".credentials.yml"
+PROFILER_DATA_DIR = Path("/tmp/data")
 
 MAX_LOG_LINES = 1000
 
@@ -212,10 +215,45 @@ def _user_initials() -> str:
 
 
 BASE_COMMANDS = {
-    "profiler": ["labs", "lakebridge", "configure-database-profiler"],
     "analyzer": ["labs", "lakebridge", "analyze"],
     "converter": ["labs", "lakebridge", "transpile"],
+    "llm-converter": ["labs", "lakebridge", "llm-transpile"],
+    "profiler-test": ["labs", "lakebridge", "test-profiler-connection"],
+    "profiler-run": ["labs", "lakebridge", "execute-database-profiler"],
 }
+
+
+@app.post("/api/profiler/configure")
+def profiler_configure():
+    body = request.get_json(silent=True) or {}
+    if body.get("source") != "mssql":
+        return jsonify({"error": "unsupported source; only mssql is supported for now"}), 400
+    missing = [k for k in ("server", "port", "user", "password") if not body.get(k)]
+    if missing:
+        return jsonify({"error": f"missing fields: {', '.join(missing)}"}), 400
+    try:
+        port = int(body["port"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "port must be a number"}), 400
+    credential = {
+        "secret_vault_type": "local",
+        "secret_vault_name": None,
+        "mssql": {
+            "auth_type": "sql_authentication",
+            "fetch_size": str(body.get("fetch_size") or "1000"),
+            "login_timeout": str(body.get("login_timeout") or "30"),
+            "server": body["server"],
+            "port": port,
+            "user": body["user"],
+            "password": body["password"],
+            "tz_info": body.get("tz_info") or "UTC",
+            "driver": body.get("driver") or "ODBC Driver 18 for SQL Server",
+        },
+    }
+    CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CRED_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(credential, f, default_flow_style=False)
+    return jsonify({"ok": True})
 
 
 @app.post("/api/upload")
@@ -283,6 +321,38 @@ def _export_results(job_id: str) -> dict[str, Any] | None:
     }
 
 
+def _export_profiler_results() -> dict[str, Any] | None:
+    extracts = sorted(PROFILER_DATA_DIR.glob("*_assessment/profiler_extract.db"))
+    if not extracts:
+        return None
+    ws_dir = f"{RESULTS_WORKSPACE_DIR}/profiler-{uuid.uuid4().hex[:12]}"
+    _workspace_cli(["workspace", "mkdirs", ws_dir])
+    exported = []
+    for path in extracts:
+        target = f"{ws_dir}/{path.parent.name}-{path.name}"
+        _workspace_cli(
+            ["workspace", "import", target, "--file", str(path), "--format", "AUTO", "--overwrite"]
+        )
+        exported.append(target)
+    return {
+        "workspace_dir": ws_dir,
+        "files": exported,
+        "url": f"https://{_workspace_host()}/#workspace{ws_dir}",
+    }
+
+
+def _llm_results(args: list[str]) -> dict[str, Any] | None:
+    if "--output-ws-folder" not in args:
+        return None
+    out = args[args.index("--output-ws-folder") + 1]
+    ws_dir = out.removeprefix("/Workspace")
+    return {
+        "workspace_dir": ws_dir,
+        "files": [],
+        "url": f"https://{_workspace_host()}/#workspace{ws_dir}",
+    }
+
+
 @app.post("/api/run/<command>")
 def run_command(command: str):
     if command not in BASE_COMMANDS:
@@ -316,16 +386,23 @@ def run_command(command: str):
                 yield f"data: {_clean_line(line)}\n\n"
         finally:
             proc.wait()
-            if job_id and proc.returncode == 0:
+            if proc.returncode == 0:
                 try:
-                    results = _export_results(job_id)
+                    if command == "profiler-run":
+                        results = _export_profiler_results()
+                    elif command == "llm-converter":
+                        results = _llm_results(extra_args)
+                    elif job_id:
+                        results = _export_results(job_id)
+                    else:
+                        results = None
                 except Exception as exc:  # noqa: BLE001
                     yield f"data: Failed to export results to workspace: {exc}\n\n"
                 else:
                     if results:
-                        yield f"data: Results exported to {results['workspace_dir']}\n\n"
+                        yield f"data: Results available at {results['workspace_dir']}\n\n"
                         yield f"event: results\ndata: {json.dumps(results)}\n\n"
-                    else:
+                    elif job_id or command == "profiler-run":
                         yield "data: No output files produced.\n\n"
             yield f"event: end\ndata: {proc.returncode}\n\n"
 

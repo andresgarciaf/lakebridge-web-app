@@ -13,8 +13,7 @@ frontend/         Vite + React + TS + Tailwind (index.html, vite.config.ts, tsco
 main.py           Local dev entrypoint (Flask built-in server)
 app.yml           Databricks Apps manifest (gunicorn command)
 databricks.yml    Databricks Asset Bundle (DAB) config
-requirements.txt  Runtime Python deps installed by the Apps platform
-pyproject.toml    Local dev environment (uv) incl. pytest + ruff
+pyproject.toml    Python deps (uv) — the Apps runtime installs them via `uv sync` from uv.lock
 Makefile          Dev + deploy targets
 tests/            API smoke tests
 ```
@@ -47,10 +46,11 @@ make clean     # remove node_modules / dist / .venv / .databricks
 ## Deploy to Databricks (Asset Bundle + Apps)
 
 The frontend is built **locally** before every deploy; only `frontend/dist`
-plus the Python backend, `requirements.txt`, and `app.yml` are uploaded. Node
-manifests are excluded from sync so the Apps runtime treats the app as a plain
-Python app: it installs `requirements.txt` and runs the gunicorn command from
-`app.yml` — no npm install at container start.
+plus the Python backend, `pyproject.toml`, `uv.lock`, and `app.yml` are
+uploaded. Node manifests are excluded from sync so the Apps runtime treats the
+app as a plain Python app: it installs dependencies with `uv sync` from the
+lockfile and runs the gunicorn command from `app.yml` — no npm install at
+container start.
 
 1. Edit `databricks.yml` and set `workspace.host` for `dev` and `prod` targets.
 2. Authenticate the Databricks CLI: `databricks auth login --host https://<workspace>`.
@@ -84,12 +84,17 @@ Python app: it installs `requirements.txt` and runs the gunicorn command from
 - `GET  /api/env`    — python / java / databricks / lakebridge versions + host
 - `POST /api/upload` — multipart `files`; saves to a per-job input dir and
   returns `{job_id, input_dir, output_dir, files}`
-- `POST /api/run/<profiler|analyzer|converter>` — runs the matching
-  `databricks labs lakebridge` command. Body: `{"args": [...], "job_id": "..."}`.
-  Streams stdout as Server-Sent Events; when a `job_id` is given and the run
-  succeeds, files in the job output dir are exported to
-  `/Shared/lakebridge-app/results/<job_id>` in the workspace and an
-  `event: results` SSE event carries the workspace paths.
+- `POST /api/profiler/configure` — writes the lakebridge profiler credentials
+  file (`~/.databricks/labs/lakebridge/.credentials.yml`). Body: `{"source":
+  "mssql", "server": ..., "port": ..., "user": ..., "password": ...}`.
+- `POST /api/run/<command>` — runs the matching `databricks labs lakebridge`
+  command, streaming stdout as Server-Sent Events. Commands: `analyzer`
+  (analyze), `converter` (transpile), `llm-converter` (llm-transpile via
+  Switch), `profiler-test` (test-profiler-connection), `profiler-run`
+  (execute-database-profiler). Body: `{"args": [...], "job_id": "..."}`.
+  On success, results land in `/Shared/lakebridge-app/results/...` (job
+  outputs, profiler extracts) or directly in the `--output-ws-folder` for the
+  LLM converter, and an `event: results` SSE event carries the workspace paths.
 
 ## Container setup (first use)
 
