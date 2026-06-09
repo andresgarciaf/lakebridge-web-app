@@ -1,4 +1,5 @@
 import io
+import tarfile
 import zipfile
 
 import pytest
@@ -68,6 +69,32 @@ def test_install_cli_reassembles_bundled_parts(monkeypatch, tmp_path):
 
     assert (target_dir / "databricks").read_bytes() == b"#!/bin/sh\necho cli\n" * 1000
     assert any("bundled" in line for line in logs)
+
+
+def test_install_java_from_bundled_parts(monkeypatch, tmp_path):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        data = b"#!/bin/sh\necho java\n"
+        info = tarfile.TarInfo("jdk-17-jre/bin/java")
+        info.size = len(data)
+        info.mode = 0o755
+        tf.addfile(info, io.BytesIO(data))
+    payload = buf.getvalue()
+
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    mid = len(payload) // 2
+    (vendor / "temurin_jre_17_linux_x64.tar.gz.part-aa").write_bytes(payload[:mid])
+    (vendor / "temurin_jre_17_linux_x64.tar.gz.part-ab").write_bytes(payload[mid:])
+
+    monkeypatch.setattr(installer, "VENDOR_DIR", vendor)
+    monkeypatch.setattr(installer, "JAVA_TARGET_DIR", tmp_path / "java")
+
+    logs: list[str] = []
+    installer.install_java(logs.append)
+
+    assert (tmp_path / "java" / "jdk-17-jre" / "bin" / "java").exists()
+    assert installer.java_bin_dir() == tmp_path / "java" / "jdk-17-jre" / "bin"
 
 
 def test_spa_fallback_without_build(client, monkeypatch, tmp_path):

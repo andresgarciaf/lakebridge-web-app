@@ -4,6 +4,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -15,12 +16,25 @@ MARKER_FILE = MARKER_DIR / "installed"
 CLI_TARGET_DIR = Path.home() / "bin"
 CLI_PATH = CLI_TARGET_DIR / ("databricks.exe" if platform.system() == "Windows" else "databricks")
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
+JAVA_TARGET_DIR = Path.home() / "java"
+# Morpheus (the converter's transpiler) needs Java 11+; Temurin 17 is LTS.
+JRE_URL = "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse"
 
 Log = Callable[[str], None]
 
 
+def java_bin_dir() -> Path | None:
+    if not JAVA_TARGET_DIR.is_dir():
+        return None
+    matches = sorted(JAVA_TARGET_DIR.glob("*/bin/java"))
+    return matches[0].parent if matches else None
+
+
 def is_installed() -> bool:
-    return MARKER_FILE.exists() and CLI_PATH.exists()
+    ok = MARKER_FILE.exists() and CLI_PATH.exists()
+    if _in_databricks_app():
+        ok = ok and java_bin_dir() is not None
+    return ok
 
 
 def _latest_cli_version() -> str:
@@ -59,15 +73,21 @@ def _platform_suffix() -> str:
     return f"{os_part}_{arch}"
 
 
-def _bundled_cli_parts() -> list[Path]:
+def _bundled_parts(pattern: str) -> list[Path]:
+    # Vendored archives are split into <10MB .part-* chunks: the Apps platform
+    # rejects larger source files and workspace import auto-extracts *.zip.
     if not VENDOR_DIR.is_dir():
         return []
-    suffix = _platform_suffix()
-    whole = sorted(VENDOR_DIR.glob(f"databricks_cli_*_{suffix}.zip"))
+    whole = sorted(VENDOR_DIR.glob(pattern))
     if whole:
         return [whole[-1]]
-    # Zip split into <10MB chunks to fit the Apps per-file source limit.
-    return sorted(VENDOR_DIR.glob(f"databricks_cli_*_{suffix}.zip.part-*"))
+    return sorted(VENDOR_DIR.glob(f"{pattern}.part-*"))
+
+
+def _reassemble(parts: list[Path], dest: Path) -> None:
+    with open(dest, "wb") as out:
+        for part in parts:
+            out.write(part.read_bytes())
 
 
 def _extract_cli(zip_path: Path, log: Log) -> None:
@@ -86,14 +106,12 @@ def _extract_cli(zip_path: Path, log: Log) -> None:
 
 
 def install_cli(log: Log) -> None:
-    parts = _bundled_cli_parts()
+    parts = _bundled_parts(f"databricks_cli_*_{_platform_suffix()}.zip")
     if parts:
         log(f"Installing Databricks CLI from bundled {parts[0].name} ({len(parts)} part(s))...")
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = Path(tmpdir) / "databricks_cli.zip"
-            with open(zip_path, "wb") as out:
-                for part in parts:
-                    out.write(part.read_bytes())
+            _reassemble(parts, zip_path)
             _extract_cli(zip_path, log)
         return
     version = _latest_cli_version()
@@ -107,13 +125,38 @@ def install_cli(log: Log) -> None:
         _extract_cli(zip_path, log)
 
 
+def install_java(log: Log) -> None:
+    if java_bin_dir():
+        log("Java already installed.")
+        return
+    JAVA_TARGET_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tar_path = Path(tmpdir) / "jre.tar.gz"
+        parts = _bundled_parts("temurin_jre_*.tar.gz")
+        if parts:
+            log(f"Installing Java from bundled {parts[0].name} ({len(parts)} part(s))...")
+            _reassemble(parts, tar_path)
+        else:
+            log(f"Downloading Temurin JRE 17 from {JRE_URL}")
+            urllib.request.urlretrieve(JRE_URL, tar_path)
+        with tarfile.open(tar_path) as tf:
+            tf.extractall(JAVA_TARGET_DIR, filter="tar")
+    java = java_bin_dir()
+    if not java:
+        raise RuntimeError("Java install failed: no */bin/java under ~/java")
+    log(f"Installed Java at {java / 'java'}")
+
+
 def cli_env() -> dict[str, str]:
     env = os.environ.copy()
     # Put the app's own interpreter first so `databricks labs` resolves a
     # python3 that can create venvs (the system python lacks ensurepip).
-    env["PATH"] = os.pathsep.join(
-        [str(CLI_TARGET_DIR), str(Path(sys.executable).parent), env.get("PATH", "")]
-    )
+    entries = [str(CLI_TARGET_DIR), str(Path(sys.executable).parent)]
+    java = java_bin_dir()
+    if java:
+        entries.append(str(java))
+        env.setdefault("JAVA_HOME", str(java.parent))
+    env["PATH"] = os.pathsep.join([*entries, env.get("PATH", "")])
     if _in_databricks_app():
         # The Apps runtime sets DATABRICKS_TOKEN_AUDIENCE, which the SDK reads
         # as github-oidc auth and rejects alongside the OAuth M2M credentials.
@@ -186,12 +229,22 @@ def install_lakebridge(log: Log) -> None:
     log("Lakebridge installed.")
 
 
+def _lakebridge_installed() -> bool:
+    state = Path.home() / ".databricks" / "labs" / "lakebridge" / "state" / "version.json"
+    return state.exists()
+
+
 def ensure_installed(log: Log) -> None:
     if is_installed():
         log("Setup already completed.")
         return
     MARKER_DIR.mkdir(parents=True, exist_ok=True)
     install_cli(log)
-    install_lakebridge(log)
+    if _in_databricks_app():
+        install_java(log)
+    if _lakebridge_installed():
+        log("Lakebridge already installed.")
+    else:
+        install_lakebridge(log)
     MARKER_FILE.write_text("ok\n")
     log("Setup complete.")

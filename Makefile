@@ -1,5 +1,5 @@
 .PHONY: install install-backend install-frontend dev backend frontend build start \
-	fetch-cli lint test clean reinstall \
+	fetch-cli fetch-jre lint test clean reinstall \
 	bundle-validate bundle-deploy bundle-deploy-prod bundle-run bundle-summary bundle-destroy
 
 TARGET ?= dev
@@ -40,6 +40,18 @@ fetch-cli:
 		https://github.com/databricks/cli/releases/download/v$$VERSION/databricks_cli_$${VERSION}_linux_amd64.zip; \
 	split -b 9m -a 2 vendor/cli.zip vendor/databricks_cli_$${VERSION}_linux_amd64.zip.part-; \
 	rm vendor/cli.zip; \
+	ls -lh vendor/
+
+# Vendors a Temurin JRE 17 (linux x64) for the converter's Morpheus transpiler,
+# split into <10MB chunks like fetch-cli.
+fetch-jre:
+	mkdir -p vendor
+	@echo "Fetching Temurin JRE 17 (linux x64)"; \
+	rm -f vendor/temurin_jre_*; \
+	curl -fsSL -o vendor/jre.tar.gz \
+		"https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse"; \
+	split -b 9m -a 2 vendor/jre.tar.gz vendor/temurin_jre_17_linux_x64.tar.gz.part-; \
+	rm vendor/jre.tar.gz; \
 	ls -lh vendor/
 
 start: build
