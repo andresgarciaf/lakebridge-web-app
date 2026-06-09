@@ -19,9 +19,14 @@ const SOURCE_DIALECTS = [
   'postgresql',
 ]
 
-const RESULTS_DIR = '/Shared/lakebridge-app/results'
+const RESULTS_BASE = '/Shared/lakebridge-app'
 
 type Engine = 'standard' | 'llm'
+
+const ENGINE_DIRS: Record<Engine, string> = {
+  standard: `${RESULTS_BASE}/morpheus-bb`,
+  llm: `${RESULTS_BASE}/switch`,
+}
 
 export function ConverterView() {
   const [engine, setEngine] = useState<Engine>('standard')
@@ -61,7 +66,7 @@ export function ConverterView() {
               '--input-source',
               job.input_dir,
               '--output-ws-folder',
-              `/Workspace${RESULTS_DIR}/${job.job_id}`,
+              `/Workspace${ENGINE_DIRS.llm}/${job.job_id}`,
               '--catalog-name',
               catalog.trim(),
               '--schema-name',
@@ -158,7 +163,9 @@ export function ConverterView() {
         <FileUpload files={files} onChange={setFiles} disabled={busy} />
         <p className="mt-2 text-sm text-slate-500">
           Converted Databricks code is written to the workspace under
-          <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">{RESULTS_DIR}</code>
+          <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">
+            {ENGINE_DIRS[engine]}
+          </code>
           when the run finishes.
         </p>
       </div>

@@ -29,7 +29,13 @@ CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 
 JOBS_DIR = Path.home() / ".lakebridge-app" / "jobs"
-RESULTS_WORKSPACE_DIR = "/Shared/lakebridge-app/results"
+RESULTS_WORKSPACE_BASE = "/Shared/lakebridge-app"
+RESULTS_WORKSPACE_DIR = f"{RESULTS_WORKSPACE_BASE}/results"
+# Converted code is grouped by engine: Switch (LLM) vs Morpheus/BladeBridge.
+COMMAND_RESULT_DIRS = {
+    "converter": f"{RESULTS_WORKSPACE_BASE}/morpheus-bb",
+    "llm-converter": f"{RESULTS_WORKSPACE_BASE}/switch",
+}
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 CRED_FILE = Path.home() / ".databricks" / "labs" / "lakebridge" / ".credentials.yml"
 PROFILER_DATA_DIR = Path("/tmp/data")
@@ -468,12 +474,12 @@ def _workspace_cli(args: list[str]) -> None:
         raise RuntimeError((proc.stderr or proc.stdout).strip())
 
 
-def _export_results(job_id: str) -> dict[str, Any] | None:
+def _export_results(job_id: str, base_dir: str = RESULTS_WORKSPACE_DIR) -> dict[str, Any] | None:
     output_dir = JOBS_DIR / job_id / "output"
     files = sorted(p for p in output_dir.rglob("*") if p.is_file())
     if not files:
         return None
-    ws_dir = f"{RESULTS_WORKSPACE_DIR}/{job_id}"
+    ws_dir = f"{base_dir}/{job_id}"
     _workspace_cli(["workspace", "mkdirs", ws_dir])
     exported = []
     for path in files:
@@ -579,7 +585,9 @@ def run_command(command: str):
                     elif command == "llm-converter":
                         results = _llm_results(extra_args)
                     elif job_id:
-                        results = _export_results(job_id)
+                        results = _export_results(
+                            job_id, COMMAND_RESULT_DIRS.get(command, RESULTS_WORKSPACE_DIR)
+                        )
                     else:
                         results = None
                 except Exception as exc:  # noqa: BLE001
