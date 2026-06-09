@@ -120,6 +120,23 @@ def test_profiler_configure_synapse(client, monkeypatch, tmp_path):
     assert data["synapse"]["profiler"]["exclude_spark_pools"] is False
 
 
+def test_dialects_reads_installed_configs(client, monkeypatch, tmp_path):
+    transpilers = tmp_path / "transpilers"
+    (transpilers / "morpheus" / "lib").mkdir(parents=True)
+    (transpilers / "morpheus" / "lib" / "config.yml").write_text(
+        "remorph:\n  dialects:\n    - snowflake\n    - tsql\n"
+    )
+    venv = tmp_path / "venv"
+    switch_dir = venv / "lib" / "python3.11" / "site-packages" / "databricks" / "labs" / "switch" / "lsp"
+    switch_dir.mkdir(parents=True)
+    (switch_dir / "config.yml").write_text("remorph:\n  dialects:\n    - snowflake\n    - python\n")
+    monkeypatch.setattr(app_module, "TRANSPILERS_DIR", transpilers)
+    monkeypatch.setattr(app_module, "LABS_VENV_DIR", venv)
+    data = client.get("/api/dialects").get_json()
+    assert data["standard"] == ["snowflake", "tsql"]
+    assert data["switch"] == ["python", "snowflake"]
+
+
 def test_models_lists_foundation_endpoints(client, monkeypatch):
     payload = (
         '[{"name": "databricks-claude-sonnet-4-5", "endpoint_type": "FOUNDATION_MODEL_API",'

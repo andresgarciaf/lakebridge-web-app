@@ -4,20 +4,38 @@ import { OutputPanel } from '../OutputPanel'
 import { useRun } from '../useRun'
 import { uploadFiles } from '../../runCommand'
 
-const SOURCE_DIALECTS = [
-  'Select',
-  'snowflake',
-  'oracle',
-  'teradata',
-  'redshift',
-  'tsql',
-  'synapse',
-  'netezza',
-  'vertica',
-  'bigquery',
-  'mysql',
-  'postgresql',
-]
+// Fallbacks if /api/dialects is unavailable; otherwise lists come from the
+// installed transpiler configs (standard) and the Switch package (llm).
+const FALLBACK_DIALECTS: Record<Engine, string[]> = {
+  standard: [
+    'snowflake',
+    'oracle',
+    'teradata',
+    'redshift',
+    'tsql',
+    'synapse',
+    'netezza',
+    'vertica',
+    'bigquery',
+    'mysql',
+    'postgresql',
+  ],
+  llm: [
+    'airflow',
+    'mssql',
+    'mysql',
+    'netezza',
+    'oracle',
+    'postgresql',
+    'pyspark',
+    'python',
+    'redshift',
+    'scala',
+    'snowflake',
+    'synapse',
+    'teradata',
+  ],
+}
 
 const RESULTS_BASE = '/Shared/lakebridge-app'
 
@@ -34,7 +52,8 @@ const DEFAULT_MODEL = 'databricks-claude-sonnet-4-5'
 
 export function ConverterView() {
   const [engine, setEngine] = useState<Engine>('standard')
-  const [sourceDialect, setSourceDialect] = useState(SOURCE_DIALECTS[0])
+  const [sourceDialect, setSourceDialect] = useState('Select')
+  const [dialects, setDialects] = useState<{ standard: string[]; llm: string[] } | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -45,6 +64,26 @@ export function ConverterView() {
   const { lines, running, exitCode, results, start, reset } = useRun(
     engine === 'llm' ? 'llm-converter' : 'converter',
   )
+
+  useEffect(() => {
+    fetch('/api/dialects')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setDialects({ standard: d.standard ?? [], llm: d.switch ?? [] })
+      })
+      .catch(() => {})
+  }, [])
+
+  const dialectOptions = [
+    'Select',
+    ...((dialects?.[engine]?.length ? dialects[engine] : FALLBACK_DIALECTS[engine]) ?? []),
+  ]
+
+  const switchEngine = (next: Engine) => {
+    setEngine(next)
+    const list = dialects?.[next]?.length ? dialects[next] : FALLBACK_DIALECTS[next]
+    if (!list.includes(sourceDialect)) setSourceDialect('Select')
+  }
 
   useEffect(() => {
     if (engine !== 'llm' || models !== null) return
@@ -109,7 +148,7 @@ export function ConverterView() {
   }
 
   const handleReset = () => {
-    setSourceDialect(SOURCE_DIALECTS[0])
+    setSourceDialect('Select')
     setFiles([])
     setUploadError(null)
     setDebug(false)
@@ -126,12 +165,12 @@ export function ConverterView() {
         <div className="inline-flex rounded-md border border-slate-300 overflow-hidden">
           <EngineTab
             active={engine === 'standard'}
-            onClick={() => setEngine('standard')}
+            onClick={() => switchEngine('standard')}
             label="Standard (Morpheus / BladeBridge)"
           />
           <EngineTab
             active={engine === 'llm'}
-            onClick={() => setEngine('llm')}
+            onClick={() => switchEngine('llm')}
             label="LLM (Switch)"
           />
         </div>
@@ -139,7 +178,7 @@ export function ConverterView() {
 
       <div className="mb-6">
         <Field label="Source Dialect">
-          <Dropdown value={sourceDialect} options={SOURCE_DIALECTS} onChange={setSourceDialect} />
+          <Dropdown value={sourceDialect} options={dialectOptions} onChange={setSourceDialect} />
         </Field>
       </div>
 

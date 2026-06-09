@@ -39,6 +39,8 @@ COMMAND_RESULT_DIRS = {
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 CRED_FILE = Path.home() / ".databricks" / "labs" / "lakebridge" / ".credentials.yml"
 PROFILER_DATA_DIR = Path("/tmp/data")
+TRANSPILERS_DIR = Path.home() / ".databricks" / "labs" / "remorph-transpilers"
+LABS_VENV_DIR = Path.home() / ".databricks" / "labs" / "lakebridge" / "state" / "venv"
 
 MAX_LOG_LINES = 1000
 
@@ -294,6 +296,28 @@ def uc_status():
             "fix_sql": fix_sql,
         }
     )
+
+
+def _config_dialects(cfg_path: Path) -> list[str]:
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    return cfg.get("remorph", {}).get("dialects", []) or []
+
+
+@app.get("/api/dialects")
+def dialects():
+    standard: set[str] = set()
+    for cfg_path in TRANSPILERS_DIR.glob("*/lib/config.yml"):
+        standard.update(_config_dialects(cfg_path))
+    switch: list[str] = []
+    for cfg_path in LABS_VENV_DIR.glob(
+        "lib/python3.*/site-packages/databricks/labs/switch/lsp/config.yml"
+    ):
+        switch = _config_dialects(cfg_path)
+        break
+    return jsonify({"standard": sorted(standard), "switch": sorted(switch)})
 
 
 @app.get("/api/models")
