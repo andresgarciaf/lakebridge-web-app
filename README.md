@@ -102,7 +102,7 @@ On the first `/api/status` call inside the Apps container the backend installs,
 in order: the Databricks CLI (from vendored split parts, see `make fetch-cli`),
 a Temurin JRE 17 (`make fetch-jre`, required by the Morpheus transpiler),
 unixODBC + MS ODBC Driver 18 (`make fetch-odbc`, required by the SQL Server
-profiler), lakebridge itself, and the transpilers including the Switch LLM
+and Azure Synapse profilers), lakebridge itself, and the transpilers including the Switch LLM
 transpiler (`install-transpile --interactive false --include-llm-transpiler
 true`, which deploys the Switch job to the workspace).
 
