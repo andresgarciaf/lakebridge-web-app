@@ -572,6 +572,8 @@ def _llm_results(args: list[str]) -> dict[str, Any] | None:
         "workspace_dir": ws_dir,
         "files": [],
         "url": f"https://{_workspace_host()}/#workspace{ws_dir}",
+        # The Switch job runs async; output appears when the job completes.
+        "pending": True,
     }
 
 
@@ -639,7 +641,13 @@ def run_command(command: str):
                     yield f"data: Failed to export results to workspace: {exc}\n\n"
                 else:
                     if results:
-                        yield f"data: Results available at {results['workspace_dir']}\n\n"
+                        if results.get("pending"):
+                            yield (
+                                f"data: Results will be saved to {results['workspace_dir']} "
+                                "when the Switch job completes.\n\n"
+                            )
+                        else:
+                            yield f"data: Results available at {results['workspace_dir']}\n\n"
                         yield f"event: results\ndata: {json.dumps(results)}\n\n"
                     elif job_id or command == "profiler-run":
                         yield "data: No output files produced.\n\n"

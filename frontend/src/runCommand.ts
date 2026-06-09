@@ -6,6 +6,7 @@ export type RunResults = {
   workspace_dir: string
   files: string[]
   url: string
+  pending?: boolean
 }
 
 export type UploadResult = {

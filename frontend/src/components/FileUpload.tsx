@@ -60,6 +60,24 @@ export function FileUpload({
 
 export function ResultsPanel({ results }: { results: RunResults | null }) {
   if (!results) return null
+  if (results.pending) {
+    return (
+      <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 p-4">
+        <p className="text-sm font-medium text-sky-900">
+          Results will be saved to the workspace:{' '}
+          <a
+            href={results.url}
+            target="_blank"
+            rel="noreferrer"
+            className="underline text-[#1f6feb]"
+          >
+            {results.workspace_dir}
+          </a>{' '}
+          when the Switch job completes.
+        </p>
+      </div>
+    )
+  }
   return (
     <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4">
       <p className="text-sm font-medium text-emerald-900">
