@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FileUpload, ResultsPanel } from '../FileUpload'
 import { OutputPanel } from '../OutputPanel'
 import { useRun } from '../useRun'
@@ -28,6 +28,10 @@ const ENGINE_DIRS: Record<Engine, string> = {
   llm: `${RESULTS_BASE}/switch`,
 }
 
+// Standard locations provisioned by the UC prerequisites check.
+const UC = { catalog: 'lakebridge', schema: 'switch', volume: 'switch_volume' }
+const DEFAULT_MODEL = 'databricks-claude-sonnet-4-5'
+
 export function ConverterView() {
   const [engine, setEngine] = useState<Engine>('standard')
   const [sourceDialect, setSourceDialect] = useState(SOURCE_DIALECTS[0])
@@ -35,18 +39,27 @@ export function ConverterView() {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [debug, setDebug] = useState(false)
-  const [catalog, setCatalog] = useState('lakebridge')
-  const [schema, setSchema] = useState('switch')
-  const [volume, setVolume] = useState('switch_volume')
-  const [model, setModel] = useState('databricks-claude-sonnet-4-5')
+  const [models, setModels] = useState<string[] | null>(null)
+  const [model, setModel] = useState(DEFAULT_MODEL)
   const [termsAccepted, setTermsAccepted] = useState(false)
   const { lines, running, exitCode, results, start, reset } = useRun(
     engine === 'llm' ? 'llm-converter' : 'converter',
   )
 
-  const llmReady =
-    engine !== 'llm' ||
-    (termsAccepted && catalog.trim() && schema.trim() && volume.trim() && model.trim())
+  useEffect(() => {
+    if (engine !== 'llm' || models !== null) return
+    fetch('/api/models')
+      .then((r) => (r.ok ? r.json() : { models: [] }))
+      .then((d) => {
+        const list: string[] = d.models ?? []
+        setModels(list)
+        if (list.length && !list.includes(model)) setModel(list[0])
+      })
+      .catch(() => setModels([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine])
+
+  const llmReady = engine !== 'llm' || (termsAccepted && model.trim())
   const ready = sourceDialect !== 'Select' && files.length > 0 && llmReady
   const busy = running || uploading
 
@@ -68,11 +81,11 @@ export function ConverterView() {
               '--output-ws-folder',
               `/Workspace${ENGINE_DIRS.llm}/${job.job_id}`,
               '--catalog-name',
-              catalog.trim(),
+              UC.catalog,
               '--schema-name',
-              schema.trim(),
+              UC.schema,
               '--volume',
-              volume.trim(),
+              UC.volume,
               '--foundation-model',
               model.trim(),
             ]
@@ -134,15 +147,33 @@ export function ConverterView() {
         <section className="border border-slate-200 rounded-lg p-5 mb-6">
           <h2 className="text-base font-semibold text-slate-900 mb-1">Switch (LLM) settings</h2>
           <p className="text-sm text-slate-500 mb-4">
-            Switch runs as a Databricks job: sources are staged in the Unity Catalog volume
-            below and converted output is written directly to the workspace. Catalog, schema,
-            and volume must already exist.
+            Switch runs as a Databricks job: sources are staged in the standard Unity Catalog
+            volume below (provisioned during app setup) and converted output is written
+            directly to the workspace.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <TextField label="Catalog" value={catalog} onChange={setCatalog} />
-            <TextField label="Schema" value={schema} onChange={setSchema} />
-            <TextField label="Volume" value={volume} onChange={setVolume} />
-            <TextField label="Foundation model endpoint" value={model} onChange={setModel} />
+            <ReadOnlyField label="Catalog" value={UC.catalog} />
+            <ReadOnlyField label="Schema" value={UC.schema} />
+            <ReadOnlyField label="Volume" value={UC.volume} />
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Foundation model endpoint
+              </label>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                disabled={models === null}
+                className="w-full px-3 py-2.5 rounded-md border border-slate-300 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1f6feb] disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                {models === null ? (
+                  <option>Loading endpoints…</option>
+                ) : models.length ? (
+                  models.map((m) => <option key={m}>{m}</option>)
+                ) : (
+                  <option>{DEFAULT_MODEL}</option>
+                )}
+              </select>
+            </div>
           </div>
           <label className="flex items-start gap-3 mt-4 text-sm text-slate-700 cursor-pointer">
             <input
@@ -224,24 +255,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function TextField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-}) {
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <label className="block text-sm font-medium text-slate-700 mb-2">{label}</label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2.5 rounded-md border border-slate-300 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1f6feb]"
-      />
+      <div className="w-full px-3 py-2.5 rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-600">
+        {value}
+      </div>
     </div>
   )
 }

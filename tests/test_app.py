@@ -120,6 +120,16 @@ def test_profiler_configure_synapse(client, monkeypatch, tmp_path):
     assert data["synapse"]["profiler"]["exclude_spark_pools"] is False
 
 
+def test_models_lists_foundation_endpoints(client, monkeypatch):
+    payload = (
+        '[{"name": "databricks-claude-sonnet-4-5", "endpoint_type": "FOUNDATION_MODEL_API"},'
+        ' {"name": "my-custom-endpoint", "endpoint_type": "SERVING"}]'
+    )
+    monkeypatch.setattr(app_module, "_uc_cli", lambda args: (True, payload))
+    data = client.get("/api/models").get_json()
+    assert data["models"] == ["databricks-claude-sonnet-4-5"]
+
+
 def test_uc_status_all_ok(client, monkeypatch):
     monkeypatch.setattr(app_module, "_uc_cli", lambda args: (True, "{}"))
     data = client.get("/api/uc-status").get_json()

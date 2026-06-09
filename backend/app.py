@@ -296,6 +296,24 @@ def uc_status():
     )
 
 
+@app.get("/api/models")
+def list_models():
+    ok, out = _uc_cli(["serving-endpoints", "list"])
+    if not ok:
+        return jsonify({"models": []})
+    try:
+        endpoints = json.loads(out)
+    except ValueError:
+        endpoints = []
+    models = sorted(
+        e["name"]
+        for e in endpoints
+        if e.get("endpoint_type") == "FOUNDATION_MODEL_API"
+        or e.get("name", "").startswith("databricks-")
+    )
+    return jsonify({"models": models})
+
+
 @app.get("/api/diagnostics")
 def diagnostics():
     labs_venv = Path.home() / ".databricks" / "labs" / "lakebridge" / "state" / "venv"
