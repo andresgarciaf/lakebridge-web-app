@@ -98,6 +98,28 @@ def test_profiler_configure_rejects_unknown_source(client):
     assert resp.status_code == 400
 
 
+def test_profiler_configure_synapse(client, monkeypatch, tmp_path):
+    cred = tmp_path / ".credentials.yml"
+    monkeypatch.setattr(app_module, "CRED_FILE", cred)
+    resp = client.post(
+        "/api/profiler/configure",
+        json={
+            "source": "synapse",
+            "workspace_name": "myws",
+            "development_endpoint": "https://myws.dev.azuresynapse.net",
+            "user": "sa",
+            "password": "secret",
+        },
+    )
+    assert resp.status_code == 200
+    import yaml
+
+    data = yaml.safe_load(cred.read_text())
+    assert data["synapse"]["workspace"]["dedicated_sql_endpoint"] == "myws.sql.azuresynapse.net"
+    assert data["synapse"]["jdbc"]["auth_type"] == "sql_authentication"
+    assert data["synapse"]["profiler"]["exclude_spark_pools"] is False
+
+
 def test_uc_status_all_ok(client, monkeypatch):
     monkeypatch.setattr(app_module, "_uc_cli", lambda args: (True, "{}"))
     data = client.get("/api/uc-status").get_json()

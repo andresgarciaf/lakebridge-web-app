@@ -347,32 +347,79 @@ BASE_COMMANDS = {
 }
 
 
-@app.post("/api/profiler/configure")
-def profiler_configure():
-    body = request.get_json(silent=True) or {}
-    if body.get("source") != "mssql":
-        return jsonify({"error": "unsupported source; only mssql is supported for now"}), 400
+def _mssql_credential(body: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     missing = [k for k in ("server", "port", "user", "password") if not body.get(k)]
     if missing:
-        return jsonify({"error": f"missing fields: {', '.join(missing)}"}), 400
+        return None, f"missing fields: {', '.join(missing)}"
     try:
         port = int(body["port"])
     except (TypeError, ValueError):
-        return jsonify({"error": "port must be a number"}), 400
-    credential = {
-        "secret_vault_type": "local",
-        "secret_vault_name": None,
-        "mssql": {
-            "auth_type": "sql_authentication",
-            "fetch_size": str(body.get("fetch_size") or "1000"),
-            "login_timeout": str(body.get("login_timeout") or "30"),
-            "server": body["server"],
-            "port": port,
-            "user": body["user"],
-            "password": body["password"],
+        return None, "port must be a number"
+    return {
+        "auth_type": "sql_authentication",
+        "fetch_size": str(body.get("fetch_size") or "1000"),
+        "login_timeout": str(body.get("login_timeout") or "30"),
+        "server": body["server"],
+        "port": port,
+        "user": body["user"],
+        "password": body["password"],
+        "tz_info": body.get("tz_info") or "UTC",
+        "driver": body.get("driver") or "ODBC Driver 18 for SQL Server",
+    }, None
+
+
+def _synapse_credential(body: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    required = ("workspace_name", "development_endpoint", "user", "password")
+    missing = [k for k in required if not body.get(k)]
+    if missing:
+        return None, f"missing fields: {', '.join(missing)}"
+    auth_type = body.get("auth_type") or "sql_authentication"
+    if auth_type not in ("sql_authentication", "ad_passwd_authentication", "spn_authentication"):
+        return None, f"invalid auth_type: {auth_type}"
+    name = body["workspace_name"]
+    return {
+        "workspace": {
+            "name": name,
+            "dedicated_sql_endpoint": f"{name}.sql.azuresynapse.net",
+            "serverless_sql_endpoint": f"{name}-ondemand.sql.azuresynapse.net",
+            "sql_user": body["user"],
+            "sql_password": body["password"],
             "tz_info": body.get("tz_info") or "UTC",
             "driver": body.get("driver") or "ODBC Driver 18 for SQL Server",
         },
+        "azure_api_access": {"development_endpoint": body["development_endpoint"]},
+        "jdbc": {
+            "auth_type": auth_type,
+            "fetch_size": str(body.get("fetch_size") or "1000"),
+            "login_timeout": str(body.get("login_timeout") or "30"),
+        },
+        "profiler": {
+            "exclude_serverless_sql_pool": bool(body.get("exclude_serverless_sql_pool")),
+            "exclude_dedicated_sql_pools": bool(body.get("exclude_dedicated_sql_pools")),
+            "exclude_spark_pools": bool(body.get("exclude_spark_pools")),
+            "exclude_monitoring_metrics": bool(body.get("exclude_monitoring_metrics")),
+            "redact_sql_pools_sql_text": bool(body.get("redact_sql_pools_sql_text")),
+        },
+    }, None
+
+
+PROFILER_SOURCES = {"mssql": _mssql_credential, "synapse": _synapse_credential}
+
+
+@app.post("/api/profiler/configure")
+def profiler_configure():
+    body = request.get_json(silent=True) or {}
+    source = body.get("source")
+    builder = PROFILER_SOURCES.get(source)
+    if builder is None:
+        return jsonify({"error": f"unsupported source; expected one of {sorted(PROFILER_SOURCES)}"}), 400
+    source_credential, error = builder(body)
+    if error:
+        return jsonify({"error": error}), 400
+    credential = {
+        "secret_vault_type": "local",
+        "secret_vault_name": None,
+        source: source_credential,
     }
     CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(CRED_FILE, "w", encoding="utf-8") as f:
