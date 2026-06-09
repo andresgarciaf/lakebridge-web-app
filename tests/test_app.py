@@ -125,6 +125,16 @@ def test_dialects_reads_installed_configs(client, monkeypatch, tmp_path):
     (transpilers / "morpheus" / "lib").mkdir(parents=True)
     (transpilers / "morpheus" / "lib" / "config.yml").write_text(
         "remorph:\n  dialects:\n    - snowflake\n    - tsql\n"
+        "options:\n"
+        "  all:\n"
+        "    - flag: overrides-file\n"
+        "      method: QUESTION\n"
+        "      default: <none>\n"
+        "  tsql:\n"
+        "    - flag: target-tech\n"
+        "      method: CHOICE\n"
+        "      prompt: Specify which technology should be generated\n"
+        "      choices: [SPARKSQL, PYSPARK]\n"
     )
     venv = tmp_path / "venv"
     switch_dir = venv / "lib" / "python3.11" / "site-packages" / "databricks" / "labs" / "switch" / "lsp"
@@ -135,6 +145,9 @@ def test_dialects_reads_installed_configs(client, monkeypatch, tmp_path):
     data = client.get("/api/dialects").get_json()
     assert data["standard"] == ["snowflake", "tsql"]
     assert data["switch"] == ["python", "snowflake"]
+    assert list(data["standard_options"]) == ["tsql"]
+    assert data["standard_options"]["tsql"][0]["flag"] == "target-tech"
+    assert data["standard_options"]["tsql"][0]["choices"] == ["SPARKSQL", "PYSPARK"]
 
 
 def test_models_lists_foundation_endpoints(client, monkeypatch):

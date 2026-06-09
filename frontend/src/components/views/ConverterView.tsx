@@ -53,6 +53,8 @@ const ENGINE_DIRS: Record<Engine, string> = {
 const UC = { catalog: 'lakebridge', schema: 'switch', volume: 'switch_volume' }
 const DEFAULT_MODEL = 'databricks-claude-sonnet-4-5'
 
+type DialectOption = { flag: string; prompt: string; choices: string[] }
+
 export function ConverterView({
   uc,
   ucChecking,
@@ -64,7 +66,12 @@ export function ConverterView({
 }) {
   const [engine, setEngine] = useState<Engine>('standard')
   const [sourceDialect, setSourceDialect] = useState('Select')
-  const [dialects, setDialects] = useState<{ standard: string[]; llm: string[] } | null>(null)
+  const [dialects, setDialects] = useState<{
+    standard: string[]
+    llm: string[]
+    options: Record<string, DialectOption[]>
+  } | null>(null)
+  const [targetTech, setTargetTech] = useState('Select')
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -80,10 +87,30 @@ export function ConverterView({
     fetch('/api/dialects')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setDialects({ standard: d.standard ?? [], llm: d.switch ?? [] })
+        if (d)
+          setDialects({
+            standard: d.standard ?? [],
+            llm: d.switch ?? [],
+            options: d.standard_options ?? {},
+          })
       })
       .catch(() => {})
   }, [])
+
+  // BladeBridge requires a target technology for some ETL dialects.
+  const targetTechOption =
+    engine === 'standard'
+      ? dialects?.options?.[sourceDialect]?.find((o) => o.flag === 'target-tech')
+      : undefined
+
+  const pickDialect = (next: string) => {
+    setSourceDialect(next)
+    const opt =
+      engine === 'standard'
+        ? dialects?.options?.[next]?.find((o) => o.flag === 'target-tech')
+        : undefined
+    setTargetTech(opt && opt.choices.length === 1 ? opt.choices[0] : 'Select')
+  }
 
   const dialectOptions = [
     'Select',
@@ -92,6 +119,7 @@ export function ConverterView({
 
   const switchEngine = (next: Engine) => {
     setEngine(next)
+    setTargetTech('Select')
     const list = dialects?.[next]?.length ? dialects[next] : FALLBACK_DIALECTS[next]
     if (!list.includes(sourceDialect)) setSourceDialect('Select')
   }
@@ -111,7 +139,8 @@ export function ConverterView({
 
   const llmReady =
     engine !== 'llm' || (termsAccepted && model.trim() && uc?.ok !== false)
-  const ready = sourceDialect !== 'Select' && files.length > 0 && llmReady
+  const techReady = !targetTechOption || targetTech !== 'Select'
+  const ready = sourceDialect !== 'Select' && files.length > 0 && llmReady && techReady
   const busy = running || uploading
 
   const handleStart = async () => {
@@ -147,8 +176,13 @@ export function ConverterView({
               job.input_dir,
               '--output-folder',
               job.output_dir,
+              '--error-file-path',
+              `${job.output_dir}/transpile_errors.log`,
               '--skip-validation',
               'true',
+              ...(targetTechOption && targetTech !== 'Select'
+                ? ['--target-technology', targetTech]
+                : []),
             ]
       if (debug) args.push('--debug')
       start(args, job.job_id)
@@ -161,6 +195,7 @@ export function ConverterView({
 
   const handleReset = () => {
     setSourceDialect('Select')
+    setTargetTech('Select')
     setFiles([])
     setUploadError(null)
     setDebug(false)
@@ -188,10 +223,19 @@ export function ConverterView({
         </div>
       </div>
 
-      <div className="mb-6">
+      <div className="mb-6 flex flex-wrap gap-6">
         <Field label="Source Dialect">
-          <Dropdown value={sourceDialect} options={dialectOptions} onChange={setSourceDialect} />
+          <Dropdown value={sourceDialect} options={dialectOptions} onChange={pickDialect} />
         </Field>
+        {targetTechOption && (
+          <Field label="Target technology">
+            <Dropdown
+              value={targetTech}
+              options={['Select', ...targetTechOption.choices]}
+              onChange={setTargetTech}
+            />
+          </Field>
+        )}
       </div>
 
       {engine === 'llm' && (

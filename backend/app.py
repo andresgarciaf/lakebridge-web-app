@@ -298,26 +298,49 @@ def uc_status():
     )
 
 
-def _config_dialects(cfg_path: Path) -> list[str]:
+def _load_lsp_config(cfg_path: Path) -> dict[str, Any]:
     try:
-        cfg = yaml.safe_load(cfg_path.read_text()) or {}
+        return yaml.safe_load(cfg_path.read_text()) or {}
     except (OSError, yaml.YAMLError):
-        return []
-    return cfg.get("remorph", {}).get("dialects", []) or []
+        return {}
 
 
 @app.get("/api/dialects")
 def dialects():
     standard: set[str] = set()
+    # Required per-dialect transpiler options (e.g. BladeBridge target-tech);
+    # without them the CLI falls back to an interactive prompt and EOFs.
+    standard_options: dict[str, list[dict[str, Any]]] = {}
     for cfg_path in TRANSPILERS_DIR.glob("*/lib/config.yml"):
-        standard.update(_config_dialects(cfg_path))
+        cfg = _load_lsp_config(cfg_path)
+        standard.update(cfg.get("remorph", {}).get("dialects", []) or [])
+        for dialect, opts in (cfg.get("options") or {}).items():
+            if dialect == "all":
+                continue
+            required = [
+                {
+                    "flag": o.get("flag"),
+                    "prompt": o.get("prompt"),
+                    "choices": o.get("choices") or [],
+                }
+                for o in opts or []
+                if o.get("default") != "<none>"
+            ]
+            if required:
+                standard_options[dialect] = required
     switch: list[str] = []
     for cfg_path in LABS_VENV_DIR.glob(
         "lib/python3.*/site-packages/databricks/labs/switch/lsp/config.yml"
     ):
-        switch = _config_dialects(cfg_path)
+        switch = _load_lsp_config(cfg_path).get("remorph", {}).get("dialects", []) or []
         break
-    return jsonify({"standard": sorted(standard), "switch": sorted(switch)})
+    return jsonify(
+        {
+            "standard": sorted(standard),
+            "switch": sorted(switch),
+            "standard_options": standard_options,
+        }
+    )
 
 
 @app.get("/api/models")
