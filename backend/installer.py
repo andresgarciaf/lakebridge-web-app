@@ -117,17 +117,41 @@ def cli_env() -> dict[str, str]:
     return env
 
 
+def _in_databricks_app() -> bool:
+    return bool(os.environ.get("DATABRICKS_APP_NAME"))
+
+
+def _write_python_shim(log: Log) -> None:
+    # `databricks labs install` creates its venv with `<python> -m venv` and
+    # then needs pip inside it, but the app interpreter is a uv-managed build
+    # whose venvs come up without pip. This shim forwards to the app
+    # interpreter and bootstraps pip into any venv it creates.
+    uv = shutil.which("uv") or "uv"
+    shim = CLI_TARGET_DIR / "python3"
+    shim.write_text(
+        f"""#!/bin/sh
+if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+    "{sys.executable}" "$@" || exit $?
+    for last; do :; done
+    exec "{uv}" pip install --quiet --python "$last/bin/python3" pip
+fi
+exec "{sys.executable}" "$@"
+"""
+    )
+    shim.chmod(0o755)
+    log(f"Wrote python3 shim at {shim}")
+
+
 def _install_env() -> dict[str, str]:
     # `databricks labs install` scans every PATH dir for python3* and picks the
     # LOWEST version >= the project minimum, so Ubuntu's /usr/bin/python3.10
     # (no ensurepip -> `-m venv` fails) wins over the app's working 3.11.
-    # Hide PATH entries that expose other interpreters from the detector.
+    # Hide every interpreter except the ~/bin shim from the detector.
     env = cli_env()
-    own = {CLI_TARGET_DIR, Path(sys.executable).parent}
     entries = []
     for entry in env["PATH"].split(os.pathsep):
         p = Path(entry)
-        if p not in own and any(p.glob("python3*")):
+        if p != CLI_TARGET_DIR and any(p.glob("python3*")):
             continue
         entries.append(entry)
     env["PATH"] = os.pathsep.join(entries)
@@ -136,7 +160,10 @@ def _install_env() -> dict[str, str]:
 
 def install_lakebridge(log: Log) -> None:
     log("Installing databricks labs lakebridge...")
-    env = _install_env()
+    env = cli_env()
+    if _in_databricks_app():
+        _write_python_shim(log)
+        env = _install_env()
     proc = subprocess.Popen(
         [str(CLI_PATH), "labs", "install", "lakebridge"],
         stdout=subprocess.PIPE,
