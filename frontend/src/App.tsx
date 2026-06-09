@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
 import { SetupScreen } from './components/SetupScreen'
-import { UcSetupScreen } from './components/UcSetupScreen'
 import { HomeView } from './components/views/HomeView'
 import { ProfilerView } from './components/views/ProfilerView'
 import { AnalyzerView } from './components/views/AnalyzerView'
@@ -24,7 +23,6 @@ export default function App() {
   const [view, setView] = useState<View>('home')
   const [uc, setUc] = useState<UcStatus | null>(null)
   const [ucChecking, setUcChecking] = useState(false)
-  const [ucSkipped, setUcSkipped] = useState(false)
 
   const checkUc = useCallback(async () => {
     setUcChecking(true)
@@ -94,31 +92,14 @@ export default function App() {
     )
   }
 
-  if (uc === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500 text-sm">
-        Checking Unity Catalog prerequisites…
-      </div>
-    )
-  }
-
-  if (!uc.ok && !ucSkipped) {
-    return (
-      <UcSetupScreen
-        status={uc}
-        checking={ucChecking}
-        onRecheck={checkUc}
-        onContinue={() => setUcSkipped(true)}
-      />
-    )
-  }
-
   return (
     <Layout view={view} env={env} onNavigate={setView}>
       {view === 'home' && <HomeView onNavigate={setView} />}
       {view === 'profiler' && <ProfilerView />}
       {view === 'analyzer' && <AnalyzerView />}
-      {view === 'converter' && <ConverterView />}
+      {view === 'converter' && (
+        <ConverterView uc={uc} ucChecking={ucChecking} onRecheckUc={checkUc} />
+      )}
     </Layout>
   )
 }

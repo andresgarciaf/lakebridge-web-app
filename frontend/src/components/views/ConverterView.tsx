@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { Combobox } from '../Combobox'
 import { FileUpload, ResultsPanel } from '../FileUpload'
 import { OutputPanel } from '../OutputPanel'
+import { UcStatusPanel } from '../UcStatusPanel'
 import { useRun } from '../useRun'
 import { uploadFiles } from '../../runCommand'
+import type { UcStatus } from '../../types'
 
 // Fallbacks if /api/dialects is unavailable; otherwise lists come from the
 // installed transpiler configs (standard) and the Switch package (llm).
@@ -51,7 +53,15 @@ const ENGINE_DIRS: Record<Engine, string> = {
 const UC = { catalog: 'lakebridge', schema: 'switch', volume: 'switch_volume' }
 const DEFAULT_MODEL = 'databricks-claude-sonnet-4-5'
 
-export function ConverterView() {
+export function ConverterView({
+  uc,
+  ucChecking,
+  onRecheckUc,
+}: {
+  uc: UcStatus | null
+  ucChecking: boolean
+  onRecheckUc: () => void
+}) {
   const [engine, setEngine] = useState<Engine>('standard')
   const [sourceDialect, setSourceDialect] = useState('Select')
   const [dialects, setDialects] = useState<{ standard: string[]; llm: string[] } | null>(null)
@@ -99,7 +109,8 @@ export function ConverterView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine])
 
-  const llmReady = engine !== 'llm' || (termsAccepted && model.trim())
+  const llmReady =
+    engine !== 'llm' || (termsAccepted && model.trim() && uc?.ok !== false)
   const ready = sourceDialect !== 'Select' && files.length > 0 && llmReady
   const busy = running || uploading
 
@@ -191,6 +202,7 @@ export function ConverterView() {
             volume below (provisioned during app setup) and converted output is written
             directly to the workspace.
           </p>
+          <UcStatusPanel status={uc} checking={ucChecking} onRecheck={onRecheckUc} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <ReadOnlyField label="Catalog" value={UC.catalog} />
             <ReadOnlyField label="Schema" value={UC.schema} />
