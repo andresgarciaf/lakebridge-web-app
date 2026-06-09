@@ -122,8 +122,11 @@ def test_profiler_configure_synapse(client, monkeypatch, tmp_path):
 
 def test_models_lists_foundation_endpoints(client, monkeypatch):
     payload = (
-        '[{"name": "databricks-claude-sonnet-4-5", "endpoint_type": "FOUNDATION_MODEL_API"},'
-        ' {"name": "my-custom-endpoint", "endpoint_type": "SERVING"}]'
+        '[{"name": "databricks-claude-sonnet-4-5", "endpoint_type": "FOUNDATION_MODEL_API",'
+        ' "task": "llm/v1/chat"},'
+        ' {"name": "databricks-gte-large-en", "endpoint_type": "FOUNDATION_MODEL_API",'
+        ' "task": "llm/v1/embeddings"},'
+        ' {"name": "my-custom-endpoint", "endpoint_type": "SERVING", "task": "llm/v1/chat"}]'
     )
     monkeypatch.setattr(app_module, "_uc_cli", lambda args: (True, payload))
     data = client.get("/api/models").get_json()
