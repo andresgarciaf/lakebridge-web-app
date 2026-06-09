@@ -14,11 +14,12 @@ from typing import Callable
 MARKER_DIR = Path.home() / ".lakebridge-app"
 # Bump the marker suffix to force a one-time re-run of setup on containers
 # that completed an older setup (each step self-skips when already done).
-MARKER_FILE = MARKER_DIR / "installed-v3"
+MARKER_FILE = MARKER_DIR / "installed-v4"
 CLI_TARGET_DIR = Path.home() / "bin"
 CLI_PATH = CLI_TARGET_DIR / ("databricks.exe" if platform.system() == "Windows" else "databricks")
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor"
 JAVA_TARGET_DIR = Path.home() / "java"
+ODBC_TARGET_DIR = Path.home() / "odbc"
 # Morpheus (the converter's transpiler) needs Java 11+; Temurin 17 is LTS.
 JRE_URL = "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse"
 
@@ -149,6 +150,41 @@ def install_java(log: Log) -> None:
     log(f"Installed Java at {java / 'java'}")
 
 
+def odbc_installed() -> bool:
+    return (ODBC_TARGET_DIR / "odbcinst.ini").exists()
+
+
+def install_odbc(log: Log) -> None:
+    # unixODBC + the MS SQL Server driver are not in the container and apt is
+    # unavailable; extract the vendored .deb contents and register the driver
+    # via a user-level odbcinst.ini (loaded through ODBCSYSINI).
+    if odbc_installed():
+        log("ODBC driver libs already installed.")
+        return
+    parts = _bundled_parts("odbc_libs_*.tar.gz")
+    if not parts:
+        log("No vendored ODBC libs (make fetch-odbc); SQL Server profiling needs them.")
+        return
+    log(f"Installing ODBC driver libs from {parts[0].name} ({len(parts)} part(s))...")
+    ODBC_TARGET_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tar_path = Path(tmpdir) / "odbc.tar.gz"
+        _reassemble(parts, tar_path)
+        with tarfile.open(tar_path) as tf:
+            tf.extractall(ODBC_TARGET_DIR, filter="tar")
+    drivers = sorted(ODBC_TARGET_DIR.glob("opt/microsoft/msodbcsql18/lib64/libmsodbcsql-*.so*"))
+    if not drivers:
+        log("WARNING: msodbcsql driver .so not found after extraction.")
+        return
+    (ODBC_TARGET_DIR / "odbcinst.ini").write_text(
+        "[ODBC Driver 18 for SQL Server]\n"
+        "Description=Microsoft ODBC Driver 18 for SQL Server\n"
+        f"Driver={drivers[-1]}\n"
+        "UsageCount=1\n"
+    )
+    log(f"Installed ODBC driver at {drivers[-1]}")
+
+
 def cli_env() -> dict[str, str]:
     env = os.environ.copy()
     # Put the app's own interpreter first so `databricks labs` resolves a
@@ -159,6 +195,15 @@ def cli_env() -> dict[str, str]:
         entries.append(str(java))
         env.setdefault("JAVA_HOME", str(java.parent))
     env["PATH"] = os.pathsep.join([*entries, env.get("PATH", "")])
+    if odbc_installed():
+        lib_dirs = [
+            str(ODBC_TARGET_DIR / "usr" / "lib" / "x86_64-linux-gnu"),
+            str(ODBC_TARGET_DIR / "opt" / "microsoft" / "msodbcsql18" / "lib64"),
+        ]
+        env["ODBCSYSINI"] = str(ODBC_TARGET_DIR)
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            filter(None, [*lib_dirs, env.get("LD_LIBRARY_PATH", "")])
+        )
     if _in_databricks_app():
         # The Apps runtime sets DATABRICKS_TOKEN_AUDIENCE, which the SDK reads
         # as github-oidc auth and rejects alongside the OAuth M2M credentials.
@@ -328,6 +373,7 @@ def ensure_installed(log: Log) -> None:
     install_cli(log)
     if _in_databricks_app():
         install_java(log)
+        install_odbc(log)
     if _lakebridge_installed():
         log("Lakebridge already installed.")
     else:

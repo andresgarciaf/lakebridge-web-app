@@ -1,5 +1,5 @@
 .PHONY: install install-backend install-frontend dev backend frontend build start \
-	fetch-cli fetch-jre lint test clean reinstall \
+	fetch-cli fetch-jre fetch-odbc lint test clean reinstall \
 	bundle-validate bundle-deploy bundle-deploy-prod bundle-run bundle-summary bundle-destroy
 
 TARGET ?= dev
@@ -41,6 +41,10 @@ fetch-cli:
 	split -b 9m -a 2 vendor/cli.zip vendor/databricks_cli_$${VERSION}_linux_amd64.zip.part-; \
 	rm vendor/cli.zip; \
 	ls -lh vendor/
+
+# Vendors unixODBC + MS ODBC Driver 18 libs for the SQL Server profiler.
+fetch-odbc:
+	./scripts/fetch_odbc.sh
 
 # Vendors a Temurin JRE 17 (linux x64) for the converter's Morpheus transpiler,
 # split into <10MB chunks like fetch-cli.

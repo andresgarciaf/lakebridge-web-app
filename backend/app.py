@@ -8,7 +8,7 @@ import threading
 import uuid
 from configparser import ConfigParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
@@ -164,6 +164,130 @@ def status():
                 "cli_path": str(CLI_PATH),
             }
         )
+
+
+UC_CATALOG = "lakebridge"
+UC_SCHEMAS = {
+    "switch": ["USE_SCHEMA", "CREATE_TABLE", "SELECT", "MODIFY"],
+    "analyzer": ["USE_SCHEMA", "CREATE_TABLE", "SELECT", "MODIFY"],
+    "transpile": ["USE_SCHEMA", "CREATE_TABLE", "SELECT", "MODIFY"],
+}
+UC_VOLUME_SCHEMA = "switch"
+UC_VOLUME = "switch_volume"
+
+
+def _uc_cli(args: list[str]) -> tuple[bool, str]:
+    proc = subprocess.run(
+        [str(CLI_PATH), *args, "-o", "json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=cli_env(),
+    )
+    out = proc.stdout if proc.returncode == 0 else (proc.stderr or proc.stdout)
+    return proc.returncode == 0, out.strip()
+
+
+def _app_principal() -> str:
+    return os.environ.get("DATABRICKS_CLIENT_ID", "")
+
+
+def _probe_volume_write() -> bool:
+    probe = (
+        f"dbfs:/Volumes/{UC_CATALOG}/{UC_VOLUME_SCHEMA}/{UC_VOLUME}/.lakebridge-app-probe"
+    )
+    ok, _ = _uc_cli(["fs", "mkdir", probe])
+    if ok:
+        _uc_cli(["fs", "rm", "-r", probe])
+    return ok
+
+
+def _check_uc_object(
+    securable: str,
+    full_name: str,
+    get_args: list[str],
+    create_args: list[str],
+    probe: Callable[[], bool],
+    required: list[str],
+) -> dict[str, Any]:
+    # A grantee can't read its own grants, so usability is verified with a
+    # functional probe instead of grants get-effective.
+    exists, _ = _uc_cli(get_args)
+    created = False
+    if not exists:
+        created, _ = _uc_cli(create_args)
+        exists = created or _uc_cli(get_args)[0]
+    usable = exists and (created or probe())
+    return {
+        "type": securable,
+        "name": full_name,
+        "exists": exists,
+        "created": created,
+        "missing_privileges": [] if usable else required,
+        "ok": usable,
+    }
+
+
+@app.get("/api/uc-status")
+def uc_status():
+    sp = _app_principal()
+    items = [
+        _check_uc_object(
+            "catalog",
+            UC_CATALOG,
+            ["catalogs", "get", UC_CATALOG],
+            ["catalogs", "create", UC_CATALOG],
+            lambda: _uc_cli(["schemas", "list", UC_CATALOG])[0],
+            ["USE_CATALOG"],
+        )
+    ]
+    for schema, required in UC_SCHEMAS.items():
+        items.append(
+            _check_uc_object(
+                "schema",
+                f"{UC_CATALOG}.{schema}",
+                ["schemas", "get", f"{UC_CATALOG}.{schema}"],
+                ["schemas", "create", schema, UC_CATALOG],
+                lambda s=schema: _uc_cli(["tables", "list", UC_CATALOG, s])[0],
+                required,
+            )
+        )
+    volume_full = f"{UC_CATALOG}.{UC_VOLUME_SCHEMA}.{UC_VOLUME}"
+    items.append(
+        _check_uc_object(
+            "volume",
+            volume_full,
+            ["volumes", "read", volume_full],
+            ["volumes", "create", UC_CATALOG, UC_VOLUME_SCHEMA, UC_VOLUME, "MANAGED"],
+            _probe_volume_write,
+            ["READ_VOLUME", "WRITE_VOLUME"],
+        )
+    )
+
+    fix_sql: list[str] = []
+    for item in items:
+        kind = item["type"].upper()
+        if not item["exists"]:
+            if item["type"] == "catalog":
+                fix_sql.append(f"CREATE CATALOG IF NOT EXISTS {item['name']};")
+            elif item["type"] == "schema":
+                fix_sql.append(f"CREATE SCHEMA IF NOT EXISTS {item['name']};")
+            else:
+                fix_sql.append(f"CREATE VOLUME IF NOT EXISTS {item['name']};")
+        if item["missing_privileges"] or not item["exists"]:
+            privs = ", ".join(
+                (item["missing_privileges"] or ["ALL PRIVILEGES"])
+            ).replace("_", " ")
+            fix_sql.append(f"GRANT {privs} ON {kind} {item['name']} TO `{sp}`;")
+
+    return jsonify(
+        {
+            "ok": all(item["ok"] for item in items),
+            "principal": sp,
+            "items": items,
+            "fix_sql": fix_sql,
+        }
+    )
 
 
 @app.get("/api/diagnostics")
@@ -368,6 +492,15 @@ def run_command(command: str):
     if job_id is not None and not (isinstance(job_id, str) and JOB_ID_RE.match(job_id)):
         return jsonify({"error": "invalid job_id"}), 400
 
+    if command == "llm-converter":
+        out = _llm_results(extra_args)
+        if out:
+            # The Switch job exports into this folder but does not create it.
+            try:
+                _workspace_cli(["workspace", "mkdirs", out["workspace_dir"]])
+            except RuntimeError as exc:
+                return jsonify({"error": f"cannot create output folder: {exc}"}), 502
+
     full_args = [*BASE_COMMANDS[command], *extra_args]
     env = cli_env()
 
@@ -381,12 +514,18 @@ def run_command(command: str):
             bufsize=1,
         )
         assert proc.stdout is not None
+        saw_error = False
         try:
             for line in iter(proc.stdout.readline, ""):
-                yield f"data: {_clean_line(line)}\n\n"
+                cleaned = _clean_line(line)
+                # lakebridge often exits 0 after logging ERROR lines; track
+                # them so we don't report results for failed LLM runs.
+                if " ERROR [" in cleaned:
+                    saw_error = True
+                yield f"data: {cleaned}\n\n"
         finally:
             proc.wait()
-            if proc.returncode == 0:
+            if proc.returncode == 0 and not (command == "llm-converter" and saw_error):
                 try:
                     if command == "profiler-run":
                         results = _export_profiler_results()

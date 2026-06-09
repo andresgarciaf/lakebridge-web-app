@@ -98,6 +98,22 @@ def test_profiler_configure_rejects_unknown_source(client):
     assert resp.status_code == 400
 
 
+def test_uc_status_all_ok(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_uc_cli", lambda args: (True, "{}"))
+    data = client.get("/api/uc-status").get_json()
+    assert data["ok"] is True
+    assert data["fix_sql"] == []
+    assert len(data["items"]) == 5
+
+
+def test_uc_status_missing_objects_produces_fix_sql(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_uc_cli", lambda args: (False, "denied"))
+    data = client.get("/api/uc-status").get_json()
+    assert data["ok"] is False
+    assert any(s.startswith("CREATE CATALOG") for s in data["fix_sql"])
+    assert any("GRANT" in s for s in data["fix_sql"])
+
+
 def test_install_cli_reassembles_bundled_parts(monkeypatch, tmp_path):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:

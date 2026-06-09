@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
 import { SetupScreen } from './components/SetupScreen'
+import { UcSetupScreen } from './components/UcSetupScreen'
 import { HomeView } from './components/views/HomeView'
 import { ProfilerView } from './components/views/ProfilerView'
 import { AnalyzerView } from './components/views/AnalyzerView'
 import { ConverterView } from './components/views/ConverterView'
-import type { EnvInfo, View } from './types'
+import type { EnvInfo, UcStatus, View } from './types'
 
 type Status = 'pending' | 'running' | 'ready' | 'error'
 
@@ -21,6 +22,26 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [env, setEnv] = useState<EnvInfo | null>(null)
   const [view, setView] = useState<View>('home')
+  const [uc, setUc] = useState<UcStatus | null>(null)
+  const [ucChecking, setUcChecking] = useState(false)
+  const [ucSkipped, setUcSkipped] = useState(false)
+
+  const checkUc = useCallback(async () => {
+    setUcChecking(true)
+    try {
+      const resp = await fetch('/api/uc-status')
+      if (resp.ok) setUc(await resp.json())
+    } catch {
+      /* surfaced via the recheck button */
+    } finally {
+      setUcChecking(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (status === 'ready' && uc === null && !ucChecking) checkUc()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status])
 
   useEffect(() => {
     let cancelled = false
@@ -69,6 +90,25 @@ export default function App() {
         status={status}
         logs={logs}
         error={error}
+      />
+    )
+  }
+
+  if (uc === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-500 text-sm">
+        Checking Unity Catalog prerequisites…
+      </div>
+    )
+  }
+
+  if (!uc.ok && !ucSkipped) {
+    return (
+      <UcSetupScreen
+        status={uc}
+        checking={ucChecking}
+        onRecheck={checkUc}
+        onContinue={() => setUcSkipped(true)}
       />
     )
   }
