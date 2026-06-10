@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -51,6 +52,29 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 def _clean_line(line: str) -> str:
     return ANSI_RE.sub("", line.rstrip())
+
+
+def _proc_lines(proc: subprocess.Popen, keepalive_seconds: int = 15):
+    # Yields stdout lines; emits None during quiet stretches so SSE streams
+    # can send keepalives (the Apps proxy times out idle connections).
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def pump():
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, ""):
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
+    while True:
+        try:
+            line = lines.get(timeout=keepalive_seconds)
+        except queue.Empty:
+            yield None
+            continue
+        if line is None:
+            return
+        yield line
 
 _state_lock = threading.Lock()
 _install_state: dict[str, Any] = {
@@ -406,9 +430,11 @@ def _stream_subprocess(cmd: list[str]) -> Response:
             env=env,
             bufsize=1,
         )
-        assert proc.stdout is not None
         try:
-            for line in iter(proc.stdout.readline, ""):
+            for line in _proc_lines(proc):
+                if line is None:
+                    yield ": keepalive\n\n"
+                    continue
                 yield f"data: {_clean_line(line)}\n\n"
         finally:
             proc.wait()
@@ -808,10 +834,12 @@ def run_command(command: str):
             env=env,
             bufsize=1,
         )
-        assert proc.stdout is not None
         saw_error = False
         try:
-            for line in iter(proc.stdout.readline, ""):
+            for line in _proc_lines(proc):
+                if line is None:
+                    yield ": keepalive\n\n"
+                    continue
                 cleaned = _clean_line(line)
                 # lakebridge often exits 0 after logging ERROR lines; track
                 # them so we don't report results for failed LLM runs.
