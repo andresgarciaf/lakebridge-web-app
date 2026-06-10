@@ -383,7 +383,7 @@ def _recon_job_id() -> str | None:
     if raw is None:
         return None
     try:
-        return json.loads(raw).get("resources", {}).get("jobs", {}).get("Reconciliation")
+        return json.loads(raw).get("resources", {}).get("jobs", {}).get("Reconciliation Runner")
     except ValueError:
         return None
 
