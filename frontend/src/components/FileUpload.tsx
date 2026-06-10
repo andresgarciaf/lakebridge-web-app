@@ -38,7 +38,7 @@ export function FileUpload({
           <span className="text-sm text-slate-500">
             {files.length
               ? `${files.length} file(s) selected`
-              : 'Files are uploaded to the app and processed there.'}
+              : 'Select files, or a .zip to upload whole folders (structure is preserved).'}
           </span>
         </div>
         {files.length > 0 && (

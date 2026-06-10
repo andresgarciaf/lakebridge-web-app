@@ -790,6 +790,38 @@ def _prune_old_jobs(max_age_hours: int = 24) -> None:
             continue
 
 
+MAX_ZIP_ENTRIES = 20000
+MAX_ZIP_BYTES = 500 * 1024 * 1024
+
+
+def _extract_zip(payload, input_dir: Path) -> list[str]:
+    # Preserves the folder structure inside the zip; the analyzer and
+    # converters walk the input directory recursively.
+    import zipfile
+
+    saved: list[str] = []
+    total = 0
+    root = input_dir.resolve()
+    with zipfile.ZipFile(payload) as zf:
+        for info in zf.infolist():
+            if info.is_dir() or len(saved) >= MAX_ZIP_ENTRIES:
+                continue
+            name = info.filename
+            if name.startswith("__MACOSX/") or Path(name).name.startswith("."):
+                continue
+            target = (input_dir / name).resolve()
+            if not str(target).startswith(str(root) + os.sep):
+                continue  # zip-slip
+            total += info.file_size
+            if total > MAX_ZIP_BYTES:
+                raise ValueError("zip contents exceed the 500MB limit")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            saved.append(str(target.relative_to(root)))
+    return saved
+
+
 @app.post("/api/upload")
 def upload():
     files = request.files.getlist("files")
@@ -806,16 +838,23 @@ def upload():
         name = secure_filename(f.filename or "")
         if not name:
             continue
-        f.save(input_dir / name)
-        saved.append(name)
+        if name.lower().endswith(".zip"):
+            try:
+                saved.extend(_extract_zip(f.stream, input_dir))
+            except Exception as exc:  # noqa: BLE001
+                return jsonify({"error": f"could not extract {name}: {exc}"}), 400
+        else:
+            f.save(input_dir / name)
+            saved.append(name)
     if not saved:
-        return jsonify({"error": "no valid filenames"}), 400
+        return jsonify({"error": "no valid files (empty zip?)"}), 400
     return jsonify(
         {
             "job_id": job_id,
             "input_dir": str(input_dir),
             "output_dir": str(output_dir),
-            "files": saved,
+            "file_count": len(saved),
+            "files": saved[:100],
         }
     )
 

@@ -83,6 +83,29 @@ def test_upload_prunes_old_jobs(client, monkeypatch, tmp_path):
     assert not stale.exists()
 
 
+def test_upload_extracts_zip_preserving_structure(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("etl/staging/load.sql", "SELECT 1;")
+        zf.writestr("etl/marts/fact.sql", "SELECT 2;")
+        zf.writestr("__MACOSX/junk", "x")
+        zf.writestr("../escape.sql", "evil")
+    buf.seek(0)
+    resp = client.post(
+        "/api/upload",
+        data={"files": [(buf, "estate.zip")]},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["file_count"] == 2
+    job = tmp_path / data["job_id"] / "input"
+    assert (job / "etl" / "staging" / "load.sql").read_text() == "SELECT 1;"
+    assert (job / "etl" / "marts" / "fact.sql").exists()
+    assert not (tmp_path / "escape.sql").exists()
+
+
 def test_upload_without_files_400(client):
     resp = client.post("/api/upload", data={}, content_type="multipart/form-data")
     assert resp.status_code == 400
