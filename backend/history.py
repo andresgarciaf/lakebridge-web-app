@@ -186,6 +186,46 @@ def list_runs(limit: int = 50) -> list[dict[str, Any]]:
     ]
 
 
+def run_lineage(run_id: str) -> dict[str, Any]:
+    run_param = [{"name": "run_id", "value": run_id}]
+    node_rows = sql(
+        f"""SELECT object, lower(action), COUNT(DISTINCT source_file), SUM(cnt)
+            FROM {CATALOG}.{SCHEMA}.object_relations
+            WHERE run_id = :run_id GROUP BY object, lower(action)""",
+        run_param,
+    )
+    nodes: dict[str, dict[str, Any]] = {}
+    for obj, action, files, refs in node_rows:
+        node = nodes.setdefault(obj, {"name": obj, "actions": {}, "files": 0, "references": 0})
+        node["actions"][action] = int(files or 0)
+        node["files"] += int(files or 0)
+        node["references"] += int(refs or 0)
+
+    # A script that reads X and creates/writes Y implies data flow X -> Y,
+    # with the script kept as edge metadata.
+    edge_rows = sql(
+        f"""SELECT r.object, w.object, w.source_file, lower(w.action)
+            FROM {CATALOG}.{SCHEMA}.object_relations r
+            JOIN {CATALOG}.{SCHEMA}.object_relations w
+              ON r.run_id = w.run_id AND r.source_file = w.source_file
+            WHERE r.run_id = :run_id
+              AND lower(r.action) = 'read'
+              AND lower(w.action) <> 'read'
+              AND r.object <> w.object""",
+        run_param,
+    )
+    edges: dict[tuple[str, str], dict[str, Any]] = {}
+    for src, dst, source_file, action in edge_rows:
+        edge = edges.setdefault((src, dst), {"src": src, "dst": dst, "files": []})
+        entry = {"file": source_file, "action": action}
+        if entry not in edge["files"]:
+            edge["files"].append(entry)
+    return {
+        "nodes": sorted(nodes.values(), key=lambda n: -n["references"]),
+        "edges": sorted(edges.values(), key=lambda e: (e["src"], e["dst"])),
+    }
+
+
 def run_insights(run_id: str) -> dict[str, Any]:
     run_param = [{"name": "run_id", "value": run_id}]
     functions = sql(

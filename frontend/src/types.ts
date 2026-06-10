@@ -1,4 +1,11 @@
-export type View = 'home' | 'profiler' | 'analyzer' | 'converter' | 'reconcile' | 'instructions'
+export type View =
+  | 'home'
+  | 'profiler'
+  | 'analyzer'
+  | 'converter'
+  | 'reconcile'
+  | 'lineage'
+  | 'instructions'
 
 export type UcItem = {
   type: string

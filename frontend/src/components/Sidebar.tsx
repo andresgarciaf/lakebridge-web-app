@@ -4,6 +4,7 @@ import {
   ConverterNavIcon,
   HomeIcon,
   InfoIcon,
+  LineageNavIcon,
   ProfilerNavIcon,
   ReconcileNavIcon,
 } from './Icons'
@@ -15,6 +16,7 @@ const UTILITIES: Item[] = [
   { key: 'analyzer', label: 'Analyzer', icon: () => <AnalyzerNavIcon /> },
   { key: 'converter', label: 'Converter', icon: () => <ConverterNavIcon /> },
   { key: 'reconcile', label: 'Reconcile', icon: () => <ReconcileNavIcon /> },
+  { key: 'lineage', label: 'Lineage', icon: () => <LineageNavIcon /> },
 ]
 
 function NavButton({

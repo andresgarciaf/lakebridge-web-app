@@ -72,6 +72,18 @@ export function ReconcileCardIcon({ size = 36 }: IconProps) {
   )
 }
 
+export function LineageNavIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke()} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="12" r="2.5" />
+      <circle cx="19" cy="5" r="2.5" />
+      <circle cx="19" cy="19" r="2.5" />
+      <path d="M7.3 10.8 16.7 6" />
+      <path d="m7.3 13.2 9.4 4.8" />
+    </svg>
+  )
+}
+
 export function FolderIcon({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke()} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

@@ -608,6 +608,16 @@ def analyzer_run_insights(run_id: str):
         return jsonify({"error": str(exc)}), 502
 
 
+@app.get("/api/analyzer/runs/<run_id>/lineage")
+def analyzer_run_lineage(run_id: str):
+    if not JOB_ID_RE.match(run_id):
+        return jsonify({"error": "invalid run id"}), 400
+    try:
+        return jsonify(history.run_lineage(run_id))
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 @app.get("/api/models")
 def list_models():
     ok, out = _uc_cli(["serving-endpoints", "list"])
