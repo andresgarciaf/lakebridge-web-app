@@ -7,6 +7,14 @@ from the app container.
 
 import json
 import sys
+from pathlib import Path
+
+# Import lakebridge from lib/src (like the labs CLI does): the site-packages
+# copy crashes at import because blueprint's get_logger needs the project
+# root marker that only the lib checkout has.
+_LIB_SRC = Path.home() / ".databricks" / "labs" / "lakebridge" / "lib" / "src"
+if _LIB_SRC.is_dir():
+    sys.path.insert(0, str(_LIB_SRC))
 
 from databricks.sdk import WorkspaceClient
 
