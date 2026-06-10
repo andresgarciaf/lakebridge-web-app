@@ -12,6 +12,7 @@ export function ProfilerView() {
   const [source, setSource] = useState<Source>('mssql')
   const [server, setServer] = useState('')
   const [port, setPort] = useState('1433')
+  const [database, setDatabase] = useState('')
   const [workspaceName, setWorkspaceName] = useState('')
   const [devEndpoint, setDevEndpoint] = useState('')
   const [authType, setAuthType] = useState(AUTH_TYPES[0])
@@ -31,7 +32,7 @@ export function ProfilerView() {
     user.trim() &&
     password &&
     (source === 'mssql'
-      ? server.trim() && port.trim()
+      ? server.trim() && port.trim() && database.trim()
       : workspaceName.trim() && devEndpoint.trim())
   const busy = configState === 'saving' || testRun.running || profileRun.running
 
@@ -41,7 +42,14 @@ export function ProfilerView() {
     try {
       const payload =
         source === 'mssql'
-          ? { source, server: server.trim(), port: port.trim(), user: user.trim(), password }
+          ? {
+              source,
+              server: server.trim(),
+              port: port.trim(),
+              database: database.trim(),
+              user: user.trim(),
+              password,
+            }
           : {
               source,
               workspace_name: workspaceName.trim(),
@@ -121,6 +129,12 @@ export function ProfilerView() {
                 placeholder="myserver.database.windows.net"
               />
               <Field label="Port" value={port} onChange={touch(setPort)} placeholder="1433" />
+              <Field
+                label="Database"
+                value={database}
+                onChange={touch(setDatabase)}
+                placeholder="my_database"
+              />
             </>
           ) : (
             <>

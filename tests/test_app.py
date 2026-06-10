@@ -97,6 +97,7 @@ def test_profiler_configure_writes_credentials(client, monkeypatch, tmp_path):
             "source": "mssql",
             "server": "db.example.com",
             "port": "1433",
+            "database": "demo",
             "user": "sa",
             "password": "secret",
         },

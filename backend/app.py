@@ -598,7 +598,7 @@ BASE_COMMANDS = {
 
 
 def _mssql_credential(body: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    missing = [k for k in ("server", "port", "user", "password") if not body.get(k)]
+    missing = [k for k in ("server", "port", "database", "user", "password") if not body.get(k)]
     if missing:
         return None, f"missing fields: {', '.join(missing)}"
     try:
@@ -607,6 +607,7 @@ def _mssql_credential(body: dict[str, Any]) -> tuple[dict[str, Any] | None, str 
         return None, "port must be a number"
     return {
         "auth_type": "sql_authentication",
+        "database": body["database"],
         "fetch_size": str(body.get("fetch_size") or "1000"),
         "login_timeout": str(body.get("login_timeout") or "30"),
         "server": body["server"],
