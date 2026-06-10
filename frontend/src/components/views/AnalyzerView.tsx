@@ -105,7 +105,10 @@ export function AnalyzerView() {
         <p className="mt-2 text-sm text-slate-500">
           The analysis report is written to the workspace under
           <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">
-            /Shared/lakebridge-app/results
+            /Shared/lakebridge-app/analyzer/
+            {dialect !== 'Select'
+              ? dialect.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+              : '<technology>'}
           </code>
           when the run finishes.
         </p>

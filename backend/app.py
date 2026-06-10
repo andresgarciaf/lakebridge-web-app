@@ -34,11 +34,29 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 JOBS_DIR = Path.home() / ".lakebridge-app" / "jobs"
 RESULTS_WORKSPACE_BASE = "/Shared/lakebridge-app"
 RESULTS_WORKSPACE_DIR = f"{RESULTS_WORKSPACE_BASE}/results"
-# Converted code is grouped by engine: Switch (LLM) vs Morpheus/BladeBridge.
-COMMAND_RESULT_DIRS = {
-    "converter": f"{RESULTS_WORKSPACE_BASE}/morpheus-bb",
-    "llm-converter": f"{RESULTS_WORKSPACE_BASE}/switch",
-}
+
+
+def _slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "unknown"
+
+
+def _arg_value(args: list[str], flag: str) -> str | None:
+    if flag in args:
+        idx = args.index(flag)
+        if idx + 1 < len(args):
+            return args[idx + 1]
+    return None
+
+
+def _results_base(command: str, args: list[str]) -> str:
+    # Outputs are grouped by utility and source technology:
+    #   analyzer/<tech>, profiler/<tech>, morpheus-bb/<dialect>, switch/<dialect>
+    if command == "analyzer":
+        return f"{RESULTS_WORKSPACE_BASE}/analyzer/{_slug(_arg_value(args, '--source-tech') or 'unknown')}"
+    if command == "converter":
+        return f"{RESULTS_WORKSPACE_BASE}/morpheus-bb/{_slug(_arg_value(args, '--source-dialect') or 'unknown')}"
+    return RESULTS_WORKSPACE_DIR
 JOB_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 CRED_FILE = Path.home() / ".databricks" / "labs" / "lakebridge" / ".credentials.yml"
 PROFILER_DATA_DIR = Path("/tmp/data")
@@ -811,11 +829,11 @@ def _export_results(job_id: str, base_dir: str = RESULTS_WORKSPACE_DIR) -> dict[
     }
 
 
-def _export_profiler_results() -> dict[str, Any] | None:
+def _export_profiler_results(tech: str) -> dict[str, Any] | None:
     extracts = sorted(PROFILER_DATA_DIR.glob("*_assessment/profiler_extract.db"))
     if not extracts:
         return None
-    ws_dir = f"{RESULTS_WORKSPACE_DIR}/profiler-{uuid.uuid4().hex[:12]}"
+    ws_dir = f"{RESULTS_WORKSPACE_BASE}/profiler/{tech}/{uuid.uuid4().hex[:12]}"
     _workspace_cli(["workspace", "mkdirs", ws_dir])
     exported = []
     for path in extracts:
@@ -898,13 +916,12 @@ def run_command(command: str):
             if proc.returncode == 0 and not (command == "llm-converter" and saw_error):
                 try:
                     if command == "profiler-run":
-                        results = _export_profiler_results()
+                        tech = _slug(_arg_value(extra_args, "--source-tech") or "unknown")
+                        results = _export_profiler_results(tech)
                     elif command == "llm-converter":
                         results = _llm_results(extra_args)
                     elif job_id:
-                        results = _export_results(
-                            job_id, COMMAND_RESULT_DIRS.get(command, RESULTS_WORKSPACE_DIR)
-                        )
+                        results = _export_results(job_id, _results_base(command, extra_args))
                     else:
                         results = None
                 except Exception as exc:  # noqa: BLE001

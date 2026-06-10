@@ -118,9 +118,11 @@ container start.
   (analyze), `converter` (transpile), `llm-converter` (llm-transpile via
   Switch), `profiler-test` (test-profiler-connection), `profiler-run`
   (execute-database-profiler). Body: `{"args": [...], "job_id": "..."}`.
-  On success, results land in `/Shared/lakebridge-app/results/...` (job
-  outputs, profiler extracts) or directly in the `--output-ws-folder` for the
-  LLM converter, and an `event: results` SSE event carries the workspace paths.
+  On success, results land in the workspace grouped by utility and source
+  technology — `analyzer/<tech>/<run>`, `profiler/<tech>/<run>`,
+  `morpheus-bb/<dialect>/<run>`, `switch/<dialect>/<run>` under
+  `/Shared/lakebridge-app/` — and an `event: results` SSE event carries the
+  workspace paths.
 
 ## Container setup (first use)
 

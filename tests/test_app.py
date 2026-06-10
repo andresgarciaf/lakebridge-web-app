@@ -181,6 +181,18 @@ def test_models_lists_foundation_endpoints(client, monkeypatch):
     assert data["models"] == ["databricks-claude-sonnet-4-5"]
 
 
+def test_results_base_groups_by_utility_and_tech():
+    assert (
+        app_module._results_base("analyzer", ["--source-tech", "MS SQL Server"])
+        == "/Shared/lakebridge-app/analyzer/ms-sql-server"
+    )
+    assert (
+        app_module._results_base("converter", ["--source-dialect", "informatica (desktop edition)"])
+        == "/Shared/lakebridge-app/morpheus-bb/informatica-desktop-edition"
+    )
+    assert app_module._results_base("analyzer", []) == "/Shared/lakebridge-app/analyzer/unknown"
+
+
 def test_reconcile_setup_validates_input(client):
     resp = client.post("/api/reconcile/setup", json={"data_source": "mongodb"})
     assert resp.status_code == 400

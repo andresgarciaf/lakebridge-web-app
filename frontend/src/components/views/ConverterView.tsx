@@ -49,6 +49,8 @@ const ENGINE_DIRS: Record<Engine, string> = {
   llm: `${RESULTS_BASE}/switch`,
 }
 
+const slug = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown'
+
 // Standard locations provisioned by the UC prerequisites check.
 const UC = { catalog: 'lakebridge', schema: 'converter', volume: 'switch' }
 const DEFAULT_MODEL = 'databricks-claude-sonnet-4-5'
@@ -159,7 +161,7 @@ export function ConverterView({
               '--input-source',
               job.input_dir,
               '--output-ws-folder',
-              `/Workspace${ENGINE_DIRS.llm}/${job.job_id}`,
+              `/Workspace${ENGINE_DIRS.llm}/${slug(sourceDialect)}/${job.job_id}`,
               '--catalog-name',
               UC.catalog,
               '--schema-name',
@@ -284,7 +286,7 @@ export function ConverterView({
         <p className="mt-2 text-sm text-slate-500">
           Converted Databricks code is written to the workspace under
           <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">
-            {ENGINE_DIRS[engine]}
+            {ENGINE_DIRS[engine]}/{sourceDialect !== 'Select' ? slug(sourceDialect) : '<dialect>'}
           </code>
           when the run finishes.
         </p>

@@ -198,7 +198,7 @@ export function ProfilerView() {
         <p className="mt-3 text-sm text-slate-500">
           The profiler extract (DuckDB) is saved to the workspace under
           <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">
-            /Shared/lakebridge-app/results
+            /Shared/lakebridge-app/profiler/{source}
           </code>
           when the run finishes.
         </p>
