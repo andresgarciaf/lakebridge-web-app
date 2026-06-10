@@ -7,7 +7,6 @@ import { AnalyzerView } from './components/views/AnalyzerView'
 import { ConverterView } from './components/views/ConverterView'
 import { ReconcileView } from './components/views/ReconcileView'
 import { InstructionsView } from './components/views/InstructionsView'
-import { LineageView } from './components/views/LineageView'
 import type { EnvInfo, UcStatus, View } from './types'
 
 type Status = 'pending' | 'running' | 'ready' | 'error'
@@ -104,7 +103,6 @@ export default function App() {
         <ConverterView uc={uc} ucChecking={ucChecking} onRecheckUc={checkUc} />
       )}
       {view === 'reconcile' && <ReconcileView />}
-      {view === 'lineage' && <LineageView />}
       {view === 'instructions' && <InstructionsView />}
     </Layout>
   )

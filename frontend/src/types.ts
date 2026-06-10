@@ -4,7 +4,6 @@ export type View =
   | 'analyzer'
   | 'converter'
   | 'reconcile'
-  | 'lineage'
   | 'instructions'
 
 export type UcItem = {

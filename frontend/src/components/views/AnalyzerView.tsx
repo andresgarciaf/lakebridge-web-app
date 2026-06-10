@@ -4,6 +4,7 @@ import { InsightsPanel, type AnalyzerRun, type RunInsights } from '../InsightsPa
 import { OutputPanel } from '../OutputPanel'
 import { useRun } from '../useRun'
 import { uploadFiles } from '../../runCommand'
+import { LineageView } from './LineageView'
 
 // Must match lakebridge's Analyzer.supported_source_technologies(); an
 // unknown value makes the CLI fall back to an interactive prompt and fail.
@@ -57,6 +58,7 @@ export function AnalyzerView() {
   const [selectedRun, setSelectedRun] = useState<string>('')
   const [insights, setInsights] = useState<RunInsights | null>(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
+  const [tab, setTab] = useState<'analyze' | 'lineage'>('analyze')
   const { lines, running, exitCode, results, start, reset } = useRun('analyzer')
 
   const refreshRuns = useCallback(() => {
@@ -122,8 +124,18 @@ export function AnalyzerView() {
     reset()
   }
 
+  if (tab === 'lineage') {
+    return (
+      <div className="max-w-6xl">
+        <Tabs tab={tab} onChange={setTab} />
+        <LineageView embedded />
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-6xl">
+      <Tabs tab={tab} onChange={setTab} />
       <div className="flex items-start justify-between mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Select code to analyze</h1>
         <div className="flex items-center gap-3">
@@ -185,6 +197,31 @@ export function AnalyzerView() {
       <ResultsPanel results={results} />
       {selected && <InsightsPanel run={selected} insights={insights} loading={insightsLoading} />}
       <OutputPanel lines={lines} running={running} exitCode={exitCode} />
+    </div>
+  )
+}
+
+function Tabs({
+  tab,
+  onChange,
+}: {
+  tab: 'analyze' | 'lineage'
+  onChange: (t: 'analyze' | 'lineage') => void
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-slate-300 overflow-hidden mb-6">
+      {(['analyze', 'lineage'] as const).map((t) => (
+        <button
+          key={t}
+          onClick={() => onChange(t)}
+          className={
+            'px-4 py-2 text-sm font-medium capitalize transition ' +
+            (tab === t ? 'bg-[#1f6feb] text-white' : 'bg-white text-slate-700 hover:bg-slate-50')
+          }
+        >
+          {t === 'analyze' ? 'Analyze' : 'Lineage'}
+        </button>
+      ))}
     </div>
   )
 }

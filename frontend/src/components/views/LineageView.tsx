@@ -18,7 +18,7 @@ type LineageEdge = {
 
 type Lineage = { nodes: LineageNode[]; edges: LineageEdge[] }
 
-export function LineageView() {
+export function LineageView({ embedded = false }: { embedded?: boolean }) {
   const [runs, setRuns] = useState<AnalyzerRun[]>([])
   const [selectedRun, setSelectedRun] = useState('')
   const [lineage, setLineage] = useState<Lineage | null>(null)
@@ -79,7 +79,11 @@ export function LineageView() {
   return (
     <div className="max-w-6xl">
       <div className="flex items-start justify-between mb-2">
-        <h1 className="text-2xl font-semibold text-slate-900">Lineage</h1>
+        {embedded ? (
+          <h2 className="text-lg font-semibold text-slate-900">Object lineage</h2>
+        ) : (
+          <h1 className="text-2xl font-semibold text-slate-900">Lineage</h1>
+        )}
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-600">Analyzer run</span>
           <select
