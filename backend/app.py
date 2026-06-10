@@ -507,6 +507,51 @@ def reconcile_table_config():
     return jsonify({"ok": True, "path": target})
 
 
+# remote_query (used by reconcile's federation reader) needs DBR 17+;
+# lakebridge deploys the job with the latest LTS, which can be older.
+RECON_MIN_DBR_MAJOR = 17
+RECON_DBR = "17.3.x-scala2.13"
+
+
+def _ensure_recon_job_dbr(job_id: str) -> None:
+    ok, out = _uc_cli(["jobs", "get", job_id])
+    if not ok:
+        return
+    try:
+        settings = json.loads(out).get("settings", {})
+    except ValueError:
+        return
+
+    def too_old(cluster: dict[str, Any]) -> bool:
+        version = cluster.get("spark_version", "")
+        try:
+            return int(version.split(".")[0]) < RECON_MIN_DBR_MAJOR
+        except ValueError:
+            return False
+
+    changed = False
+    new_settings: dict[str, Any] = {}
+    job_clusters = settings.get("job_clusters") or []
+    for jc in job_clusters:
+        if too_old(jc.get("new_cluster") or {}):
+            jc["new_cluster"]["spark_version"] = RECON_DBR
+            changed = True
+    if changed:
+        new_settings["job_clusters"] = job_clusters
+    tasks = settings.get("tasks") or []
+    tasks_changed = False
+    for task in tasks:
+        if task.get("new_cluster") and too_old(task["new_cluster"]):
+            task["new_cluster"]["spark_version"] = RECON_DBR
+            tasks_changed = True
+    if tasks_changed:
+        new_settings["tasks"] = tasks
+    if new_settings:
+        _uc_cli(
+            ["jobs", "update", "--json", json.dumps({"job_id": int(job_id), "new_settings": new_settings})]
+        )
+
+
 @app.post("/api/reconcile/run")
 def reconcile_run():
     body = request.get_json(silent=True) or {}
@@ -516,6 +561,7 @@ def reconcile_run():
     job_id = _recon_job_id()
     if not job_id:
         return jsonify({"error": "reconcile job not deployed; run setup first"}), 409
+    _ensure_recon_job_dbr(job_id)
     payload = json.dumps({"job_id": int(job_id), "job_parameters": {"operation_name": operation}})
     return _stream_subprocess([str(CLI_PATH), "jobs", "run-now", "--json", payload])
 
