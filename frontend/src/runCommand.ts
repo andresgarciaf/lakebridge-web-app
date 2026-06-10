@@ -40,8 +40,52 @@ export function runCommand(
   return streamPost(`/api/run/${command}`, jobId ? { args, job_id: jobId } : { args }, cb)
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 export function streamPost(path: string, body: unknown, cb: RunCallbacks): RunHandle {
   const ctrl = new AbortController()
+  let runKey: string | null = null
+  let linesReceived = 0
+  let resultsSent = false
+  let finished = false
+
+  const finish = (code: number) => {
+    if (finished) return
+    finished = true
+    cb.onDone(code)
+  }
+
+  // If the SSE connection drops (proxy timeout, network blip), the run keeps
+  // going server-side — re-attach by polling its recorded state.
+  const reattach = async () => {
+    if (!runKey || finished) return false
+    cb.onLine('— stream interrupted; re-attached to the run, it continues on the server —')
+    for (let attempt = 0; attempt < 900 && !finished && !ctrl.signal.aborted; attempt++) {
+      await sleep(4000)
+      try {
+        const resp = await fetch(`/api/run-state/${runKey}`)
+        if (!resp.ok) continue
+        const state = await resp.json()
+        const lines: string[] = state.lines ?? []
+        for (const line of lines.slice(linesReceived)) {
+          cb.onLine(line)
+          linesReceived++
+        }
+        if (state.results && !resultsSent) {
+          resultsSent = true
+          cb.onResults?.(state.results)
+        }
+        if (state.done) {
+          finish(state.exit_code ?? -1)
+          return true
+        }
+      } catch {
+        /* transient; keep polling */
+      }
+    }
+    return finished
+  }
+
   ;(async () => {
     try {
       const resp = await fetch(path, {
@@ -53,7 +97,7 @@ export function streamPost(path: string, body: unknown, cb: RunCallbacks): RunHa
       if (!resp.ok || !resp.body) {
         const data = await resp.json().catch(() => null)
         cb.onError(data?.error ?? `HTTP ${resp.status}`)
-        cb.onDone(resp.status)
+        finish(resp.status)
         return
       }
       const reader = resp.body.getReader()
@@ -68,10 +112,16 @@ export function streamPost(path: string, body: unknown, cb: RunCallbacks): RunHa
         for (const ev of events) {
           const isEnd = ev.startsWith('event: end')
           const isResults = ev.startsWith('event: results')
+          const isRun = ev.startsWith('event: run')
           const dataLine = ev.split('\n').find((l) => l.startsWith('data: '))
           const payload = dataLine ? dataLine.slice(6) : ''
+          if (isRun) {
+            runKey = payload || null
+            continue
+          }
           if (isResults) {
             try {
+              resultsSent = true
               cb.onResults?.(JSON.parse(payload))
             } catch {
               /* ignore malformed results payload */
@@ -79,17 +129,32 @@ export function streamPost(path: string, body: unknown, cb: RunCallbacks): RunHa
             continue
           }
           if (isEnd) {
-            cb.onDone(Number(payload))
+            finish(Number(payload))
             return
           }
-          if (payload) cb.onLine(payload)
+          if (payload) {
+            linesReceived++
+            cb.onLine(payload)
+          }
         }
       }
-      cb.onDone(0)
+      // Stream ended without an `end` event — truncated by a proxy.
+      if (!(await reattach())) finish(0)
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') cb.onError((err as Error).message)
-      cb.onDone(-1)
+      if ((err as Error).name === 'AbortError') {
+        finished = true
+        return
+      }
+      if (!(await reattach())) {
+        cb.onError((err as Error).message)
+        finish(-1)
+      }
     }
   })()
-  return { abort: () => ctrl.abort() }
+  return {
+    abort: () => {
+      finished = true
+      ctrl.abort()
+    },
+  }
 }

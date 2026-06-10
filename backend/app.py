@@ -73,6 +73,39 @@ def _clean_line(line: str) -> str:
     return ANSI_RE.sub("", line.rstrip())
 
 
+# In-memory state per run so clients can re-attach after the Apps proxy or
+# the network drops a long SSE stream (single worker process by design).
+RUN_STATES: dict[str, dict[str, Any]] = {}
+RUN_STATE_LIMIT = 25
+RUN_KEY_RE = re.compile(r"^[0-9a-f]{12,32}$")
+
+
+def _new_run_state(key: str) -> dict[str, Any]:
+    while len(RUN_STATES) >= RUN_STATE_LIMIT:
+        oldest = min(RUN_STATES, key=lambda k: RUN_STATES[k]["ts"])
+        RUN_STATES.pop(oldest)
+    state = {"ts": time.time(), "lines": [], "done": False, "exit_code": None, "results": None}
+    RUN_STATES[key] = state
+    return state
+
+
+@app.get("/api/run-state/<key>")
+def run_state(key: str):
+    if not RUN_KEY_RE.match(key):
+        return jsonify({"error": "invalid run key"}), 400
+    state = RUN_STATES.get(key)
+    if state is None:
+        return jsonify({"error": "unknown or expired run"}), 404
+    return jsonify(
+        {
+            "lines": state["lines"][-4000:],
+            "done": state["done"],
+            "exit_code": state["exit_code"],
+            "results": state["results"],
+        }
+    )
+
+
 def _sse_from_queue(events: "queue.Queue[tuple[str, str] | None]", keepalive_seconds: int = 15):
     # Drains a worker-thread event queue into SSE frames. The worker owns the
     # subprocess and all completion actions, so a client disconnect (the Apps
@@ -444,6 +477,9 @@ def _recon_table_config_name(config: dict[str, Any]) -> str:
 def _stream_subprocess(cmd: list[str]) -> Response:
     env = cli_env()
     events: "queue.Queue[tuple[str, str] | None]" = queue.Queue()
+    run_key = uuid.uuid4().hex[:12]
+    state = _new_run_state(run_key)
+    events.put(("run", run_key))
 
     def worker():
         proc = subprocess.Popen(
@@ -456,8 +492,13 @@ def _stream_subprocess(cmd: list[str]) -> Response:
         )
         assert proc.stdout is not None
         for line in iter(proc.stdout.readline, ""):
-            events.put(("data", _clean_line(line)))
+            cleaned = _clean_line(line)
+            state["lines"].append(cleaned)
+            del state["lines"][:-4000]
+            events.put(("data", cleaned))
         proc.wait()
+        state["done"] = True
+        state["exit_code"] = proc.returncode
         events.put(("end", str(proc.returncode)))
         events.put(None)
 
@@ -963,6 +1004,14 @@ def run_command(command: str):
     full_args = [*BASE_COMMANDS[command], *extra_args]
     env = cli_env()
     events: "queue.Queue[tuple[str, str] | None]" = queue.Queue()
+    run_key = job_id or uuid.uuid4().hex[:12]
+    state = _new_run_state(run_key)
+    events.put(("run", run_key))
+
+    def emit(line: str) -> None:
+        state["lines"].append(line)
+        del state["lines"][:-4000]
+        events.put(("data", line))
 
     def worker():
         proc = subprocess.Popen(
@@ -981,7 +1030,7 @@ def run_command(command: str):
             # so we don't report results for failed LLM runs.
             if " ERROR [" in cleaned:
                 saw_error = True
-            events.put(("data", cleaned))
+            emit(cleaned)
         proc.wait()
         if proc.returncode == 0 and not (command == "llm-converter" and saw_error):
             try:
@@ -995,7 +1044,7 @@ def run_command(command: str):
                 else:
                     results = None
             except Exception as exc:  # noqa: BLE001
-                events.put(("data", f"Failed to export results to workspace: {exc}"))
+                emit(f"Failed to export results to workspace: {exc}")
             else:
                 if command == "analyzer" and results:
                     try:
@@ -1005,23 +1054,23 @@ def run_command(command: str):
                             results["workspace_dir"],
                             JOBS_DIR / job_id / "output",
                         )
-                        events.put(("data", message))
+                        emit(message)
                     except Exception as exc:  # noqa: BLE001
-                        events.put(("data", f"Run-history ingestion skipped: {exc}"))
+                        emit(f"Run-history ingestion skipped: {exc}")
                 if results:
                     if results.get("pending"):
-                        events.put(
-                            (
-                                "data",
-                                f"Results will be saved to {results['workspace_dir']} "
-                                "when the Switch job completes.",
-                            )
+                        emit(
+                            f"Results will be saved to {results['workspace_dir']} "
+                            "when the Switch job completes."
                         )
                     else:
-                        events.put(("data", f"Results available at {results['workspace_dir']}"))
+                        emit(f"Results available at {results['workspace_dir']}")
+                    state["results"] = results
                     events.put(("results", json.dumps(results)))
                 elif job_id or command == "profiler-run":
-                    events.put(("data", "No output files produced."))
+                    emit("No output files produced.")
+        state["done"] = True
+        state["exit_code"] = proc.returncode
         events.put(("end", str(proc.returncode)))
         events.put(None)
 

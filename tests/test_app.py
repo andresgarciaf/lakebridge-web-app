@@ -46,6 +46,22 @@ def test_run_rejects_non_string_args(client, monkeypatch):
     assert resp.status_code == 400
 
 
+def test_run_state_unknown_404(client):
+    assert client.get("/api/run-state/aaaaaaaaaaaa").status_code == 404
+    assert client.get("/api/run-state/not-a-key!").status_code == 400
+
+
+def test_run_state_returns_recorded_state(client):
+    state = app_module._new_run_state("beefbeefbeef")
+    state["lines"] = ["hello"]
+    state["done"] = True
+    state["exit_code"] = 0
+    data = client.get("/api/run-state/beefbeefbeef").get_json()
+    assert data["lines"] == ["hello"]
+    assert data["done"] is True
+    assert data["exit_code"] == 0
+
+
 def test_run_rejects_invalid_job_id(client, monkeypatch):
     monkeypatch.setattr(app_module, "is_installed", lambda: True)
     resp = client.post("/api/run/analyzer", json={"args": [], "job_id": "../../etc"})
