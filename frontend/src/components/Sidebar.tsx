@@ -3,6 +3,7 @@ import {
   AnalyzerNavIcon,
   ConverterNavIcon,
   HomeIcon,
+  InfoIcon,
   ProfilerNavIcon,
   ReconcileNavIcon,
 } from './Icons'
@@ -59,6 +60,14 @@ export function Sidebar({ active, onSelect }: { active: View; onSelect: (v: View
           </li>
         ))}
       </ul>
+      <p className="px-3 pt-5 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+        Help
+      </p>
+      <NavButton
+        item={{ key: 'instructions', label: 'Instructions', icon: () => <InfoIcon /> }}
+        active={active === 'instructions'}
+        onSelect={onSelect}
+      />
     </nav>
   )
 }

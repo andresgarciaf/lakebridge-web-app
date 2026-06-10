@@ -6,6 +6,7 @@ import { ProfilerView } from './components/views/ProfilerView'
 import { AnalyzerView } from './components/views/AnalyzerView'
 import { ConverterView } from './components/views/ConverterView'
 import { ReconcileView } from './components/views/ReconcileView'
+import { InstructionsView } from './components/views/InstructionsView'
 import type { EnvInfo, UcStatus, View } from './types'
 
 type Status = 'pending' | 'running' | 'ready' | 'error'
@@ -102,6 +103,7 @@ export default function App() {
         <ConverterView uc={uc} ucChecking={ucChecking} onRecheckUc={checkUc} />
       )}
       {view === 'reconcile' && <ReconcileView />}
+      {view === 'instructions' && <InstructionsView />}
     </Layout>
   )
 }
