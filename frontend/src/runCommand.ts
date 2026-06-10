@@ -37,17 +37,22 @@ export function runCommand(
   cb: RunCallbacks,
   jobId?: string,
 ): RunHandle {
+  return streamPost(`/api/run/${command}`, jobId ? { args, job_id: jobId } : { args }, cb)
+}
+
+export function streamPost(path: string, body: unknown, cb: RunCallbacks): RunHandle {
   const ctrl = new AbortController()
   ;(async () => {
     try {
-      const resp = await fetch(`/api/run/${command}`, {
+      const resp = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(jobId ? { args, job_id: jobId } : { args }),
+        body: JSON.stringify(body),
         signal: ctrl.signal,
       })
       if (!resp.ok || !resp.body) {
-        cb.onError(`HTTP ${resp.status}`)
+        const data = await resp.json().catch(() => null)
+        cb.onError(data?.error ?? `HTTP ${resp.status}`)
         cb.onDone(resp.status)
         return
       }

@@ -3,6 +3,7 @@ import {
   AnalyzerCardIcon,
   ConverterCardIcon,
   ProfilerCardIcon,
+  ReconcileCardIcon,
 } from '../Icons'
 import type { View } from '../../types'
 
@@ -33,6 +34,12 @@ const CARDS: Card[] = [
       'Transpile SQL files written in any supported source dialect into their equivalent in Databricks SQL.',
     icon: () => <ConverterCardIcon />,
   },
+  {
+    key: 'reconcile',
+    title: 'Open reconcile',
+    description: 'Validate migrated data by comparing source and Databricks tables.',
+    icon: () => <ReconcileCardIcon />,
+  },
 ]
 
 export function HomeView({ onNavigate }: { onNavigate: (v: View) => void }) {
@@ -46,7 +53,7 @@ export function HomeView({ onNavigate }: { onNavigate: (v: View) => void }) {
       </section>
 
       <section className="bg-[#f4f3f1] px-6 py-8">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {CARDS.map((card) => (
             <button
               key={card.key}

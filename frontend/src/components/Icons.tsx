@@ -47,6 +47,31 @@ export function ConverterNavIcon({ size = 18 }: IconProps) {
   )
 }
 
+export function ReconcileNavIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke()} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v18" />
+      <path d="M5 6h14" />
+      <path d="m5 6-2.5 5a2.8 2.8 0 0 0 5 0L5 6" />
+      <path d="m19 6-2.5 5a2.8 2.8 0 0 0 5 0L19 6" />
+      <path d="M9 21h6" />
+    </svg>
+  )
+}
+
+export function ReconcileCardIcon({ size = 36 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#FF3621" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v18" />
+      <path d="M4.5 6h15" />
+      <path d="m4.5 6-2.75 5.5a3 3 0 0 0 5.5 0L4.5 6" />
+      <path d="m19.5 6-2.75 5.5a3 3 0 0 0 5.5 0L19.5 6" />
+      <path d="M8.5 21h7" />
+      <path d="m9.5 14.5 1.75 1.75L14.5 13" />
+    </svg>
+  )
+}
+
 export function FolderIcon({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke()} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

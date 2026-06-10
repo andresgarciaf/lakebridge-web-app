@@ -84,6 +84,13 @@ container start.
 - `GET  /api/env`    — python / java / databricks / lakebridge versions + host
 - `POST /api/upload` — multipart `files`; saves to a per-job input dir and
   returns `{job_id, input_dir, output_dir, files}`
+- `GET  /api/reconcile/status` — reconcile deployment state (config, job id, table config)
+- `POST /api/reconcile/setup` — deploys lakebridge reconcile (job, metadata, dashboards)
+  via a non-interactive driver in the lakebridge venv; streams progress as SSE
+- `POST /api/reconcile/table-config` — uploads the table mappings JSON to the
+  workspace path the Reconciliation job reads
+- `POST /api/reconcile/run` — triggers the Reconciliation job
+  (`reconcile` or `aggregates-reconcile`) and streams until completion
 - `POST /api/profiler/configure` — writes the lakebridge profiler credentials
   file (`~/.databricks/labs/lakebridge/.credentials.yml`). Body: `{"source":
   "mssql", "server": ..., "port": ..., "user": ..., "password": ...}`.

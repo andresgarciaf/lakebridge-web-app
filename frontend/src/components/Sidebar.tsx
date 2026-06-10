@@ -4,6 +4,7 @@ import {
   ConverterNavIcon,
   HomeIcon,
   ProfilerNavIcon,
+  ReconcileNavIcon,
 } from './Icons'
 
 type Item = { key: View; label: string; icon: () => JSX.Element }
@@ -12,6 +13,7 @@ const UTILITIES: Item[] = [
   { key: 'profiler', label: 'Profiler', icon: () => <ProfilerNavIcon /> },
   { key: 'analyzer', label: 'Analyzer', icon: () => <AnalyzerNavIcon /> },
   { key: 'converter', label: 'Converter', icon: () => <ConverterNavIcon /> },
+  { key: 'reconcile', label: 'Reconcile', icon: () => <ReconcileNavIcon /> },
 ]
 
 function NavButton({

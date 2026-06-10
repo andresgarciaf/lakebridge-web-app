@@ -180,6 +180,40 @@ def test_models_lists_foundation_endpoints(client, monkeypatch):
     assert data["models"] == ["databricks-claude-sonnet-4-5"]
 
 
+def test_reconcile_setup_validates_input(client):
+    resp = client.post("/api/reconcile/setup", json={"data_source": "mongodb"})
+    assert resp.status_code == 400
+    resp = client.post(
+        "/api/reconcile/setup",
+        json={"data_source": "snowflake", "report_type": "all", "source_catalog": "db"},
+    )
+    assert resp.status_code == 400
+    assert "uc_connection_name" in resp.get_json()["error"]
+
+
+def test_reconcile_status_unconfigured(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_workspace_read", lambda path: None)
+    data = client.get("/api/reconcile/status").get_json()
+    assert data["configured"] is False
+    assert data["job_id"] is None
+
+
+def test_reconcile_table_config_name():
+    config = {
+        "report_type": "all",
+        "source": {"dialect": "snowflake", "catalog": "db", "uc_connection_name": "conn"},
+    }
+    assert app_module._recon_table_config_name(config) == "recon_config_snowflake_conn_all.json"
+    config["source"]["uc_connection_name"] = None
+    assert app_module._recon_table_config_name(config) == "recon_config_snowflake_db_all.json"
+
+
+def test_reconcile_run_requires_deployed_job(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_recon_job_id", lambda: None)
+    resp = client.post("/api/reconcile/run", json={"operation": "reconcile"})
+    assert resp.status_code == 409
+
+
 def test_uc_status_all_ok(client, monkeypatch):
     monkeypatch.setattr(app_module, "_uc_cli", lambda args: (True, "{}"))
     data = client.get("/api/uc-status").get_json()

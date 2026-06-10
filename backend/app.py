@@ -345,6 +345,156 @@ def dialects():
     )
 
 
+LAKEBRIDGE_VENV_PY = (
+    Path.home() / ".databricks" / "labs" / "lakebridge" / "state" / "venv" / "bin" / "python3"
+)
+RECON_DRIVER = Path(__file__).resolve().parent / "recon_driver.py"
+RECON_SOURCES = {"databricks", "snowflake", "oracle", "mssql", "synapse", "redshift"}
+RECON_REPORTS = {"data", "schema", "row", "all"}
+
+
+def _lakebridge_ws_folder() -> str:
+    return f"/Users/{_app_principal()}/.lakebridge"
+
+
+def _workspace_read(path: str) -> str | None:
+    proc = subprocess.run(
+        [str(CLI_PATH), "workspace", "export", path],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=cli_env(),
+    )
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _recon_config() -> dict[str, Any] | None:
+    raw = _workspace_read(f"{_lakebridge_ws_folder()}/reconcile.yml")
+    if raw is None:
+        return None
+    try:
+        return yaml.safe_load(raw) or None
+    except yaml.YAMLError:
+        return None
+
+
+def _recon_job_id() -> str | None:
+    raw = _workspace_read(f"{_lakebridge_ws_folder()}/state.json")
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw).get("resources", {}).get("jobs", {}).get("Reconciliation")
+    except ValueError:
+        return None
+
+
+def _recon_table_config_name(config: dict[str, Any]) -> str:
+    source = config.get("source", {})
+    connection_or_catalog = source.get("uc_connection_name") or source.get("catalog")
+    return f"recon_config_{source.get('dialect')}_{connection_or_catalog}_{config.get('report_type')}.json"
+
+
+def _stream_subprocess(cmd: list[str]) -> Response:
+    env = cli_env()
+
+    def generate():
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                yield f"data: {_clean_line(line)}\n\n"
+        finally:
+            proc.wait()
+            yield f"event: end\ndata: {proc.returncode}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
+
+@app.get("/api/reconcile/status")
+def reconcile_status():
+    config = _recon_config()
+    job_id = _recon_job_id()
+    table_config_path = None
+    table_config_exists = False
+    if config:
+        table_config_path = f"{_lakebridge_ws_folder()}/{_recon_table_config_name(config)}"
+        table_config_exists = _workspace_read(table_config_path) is not None
+    return jsonify(
+        {
+            "configured": bool(config and job_id),
+            "config": config,
+            "job_id": job_id,
+            "table_config_path": table_config_path,
+            "table_config_exists": table_config_exists,
+        }
+    )
+
+
+@app.post("/api/reconcile/setup")
+def reconcile_setup():
+    body = request.get_json(silent=True) or {}
+    if body.get("data_source") not in RECON_SOURCES:
+        return jsonify({"error": f"data_source must be one of {sorted(RECON_SOURCES)}"}), 400
+    if body.get("report_type") not in RECON_REPORTS:
+        return jsonify({"error": f"report_type must be one of {sorted(RECON_REPORTS)}"}), 400
+    required = ["source_catalog", "source_schema", "target_catalog", "target_schema"]
+    if body["data_source"] != "databricks":
+        required.append("uc_connection_name")
+    missing = [k for k in required if not body.get(k)]
+    if missing:
+        return jsonify({"error": f"missing fields: {', '.join(missing)}"}), 400
+    if not LAKEBRIDGE_VENV_PY.exists():
+        return jsonify({"error": "lakebridge is not installed yet"}), 409
+    params_path = JOBS_DIR / f"recon-setup-{uuid.uuid4().hex[:8]}.json"
+    params_path.parent.mkdir(parents=True, exist_ok=True)
+    params_path.write_text(json.dumps(body))
+    return _stream_subprocess([str(LAKEBRIDGE_VENV_PY), str(RECON_DRIVER), str(params_path)])
+
+
+@app.post("/api/reconcile/table-config")
+def reconcile_table_config():
+    body = request.get_json(silent=True) or {}
+    table_config = body.get("config")
+    if not isinstance(table_config, dict):
+        return jsonify({"error": "config must be a JSON object"}), 400
+    config = _recon_config()
+    if not config:
+        return jsonify({"error": "reconcile is not configured yet"}), 409
+    target = f"{_lakebridge_ws_folder()}/{_recon_table_config_name(config)}"
+    local = JOBS_DIR / f"recon-tables-{uuid.uuid4().hex[:8]}.json"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(json.dumps(table_config, indent=2))
+    try:
+        _workspace_cli(
+            ["workspace", "import", target, "--file", str(local), "--format", "AUTO", "--overwrite"]
+        )
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    finally:
+        local.unlink(missing_ok=True)
+    return jsonify({"ok": True, "path": target})
+
+
+@app.post("/api/reconcile/run")
+def reconcile_run():
+    body = request.get_json(silent=True) or {}
+    operation = body.get("operation", "reconcile")
+    if operation not in ("reconcile", "aggregates-reconcile"):
+        return jsonify({"error": "operation must be reconcile or aggregates-reconcile"}), 400
+    job_id = _recon_job_id()
+    if not job_id:
+        return jsonify({"error": "reconcile job not deployed; run setup first"}), 409
+    payload = json.dumps({"job_id": int(job_id), "job_parameters": {"operation_name": operation}})
+    return _stream_subprocess([str(CLI_PATH), "jobs", "run-now", "--json", payload])
+
+
 @app.get("/api/models")
 def list_models():
     ok, out = _uc_cli(["serving-endpoints", "list"])

@@ -1,4 +1,4 @@
-export type View = 'home' | 'profiler' | 'analyzer' | 'converter'
+export type View = 'home' | 'profiler' | 'analyzer' | 'converter' | 'reconcile'
 
 export type UcItem = {
   type: string
