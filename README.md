@@ -43,6 +43,20 @@ make reinstall # clear ~/.lakebridge-app/installed → re-run install on next bo
 make clean     # remove node_modules / dist / .venv / .databricks
 ```
 
+## Install from a notebook (no local tooling)
+
+The easiest install: import `install/install_lakebridge_app.py` into any
+workspace (Workspace → Import → File or URL, e.g. the GitHub raw URL) and run
+it. The notebook fetches the app source from GitHub, downloads the runtime
+binaries (Databricks CLI, Temurin JRE, MS ODBC driver), uploads only the
+required files to your workspace, and creates + deploys the app — no git
+clone, CLI, or Node needed.
+
+**Offline install:** build `lakebridge-app-offline.zip` with `make offline-zip`
+(after `make fetch-cli fetch-jre fetch-odbc`), upload it to a UC Volume or
+workspace folder, and set the notebook's `offline_zip_path` widget. Everything
+then installs from the zip with no internet egress from the notebook.
+
 ## Deploy to Databricks (Asset Bundle + Apps)
 
 The frontend is built **locally** before every deploy; only `frontend/dist`

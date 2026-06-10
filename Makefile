@@ -1,5 +1,5 @@
 .PHONY: install install-backend install-frontend dev backend frontend build start \
-	fetch-cli fetch-jre fetch-odbc lint test clean reinstall \
+	fetch-cli fetch-jre fetch-odbc offline-zip lint test clean reinstall \
 	bundle-validate bundle-deploy bundle-deploy-prod bundle-run bundle-summary bundle-destroy
 
 TARGET ?= dev
@@ -45,6 +45,15 @@ fetch-cli:
 # Vendors unixODBC + MS ODBC Driver 18 libs for the SQL Server profiler.
 fetch-odbc:
 	./scripts/fetch_odbc.sh
+
+# Self-contained zip for the notebook installer's offline mode (includes the
+# built UI and all vendored binaries; run build + fetch-* targets first).
+offline-zip: build
+	@test -n "$$(ls vendor/databricks_cli_* 2>/dev/null)" || { echo "run 'make fetch-cli fetch-jre fetch-odbc' first"; exit 1; }
+	rm -f lakebridge-app-offline.zip
+	zip -qr lakebridge-app-offline.zip backend frontend/dist vendor app.yml pyproject.toml uv.lock \
+		-x "**/__pycache__/*"
+	@ls -lh lakebridge-app-offline.zip
 
 # Vendors a Temurin JRE 17 (linux x64) for the converter's Morpheus transpiler,
 # split into <10MB chunks like fetch-cli.

@@ -23,8 +23,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Frontend build output (rebuilt before deploy)
-frontend/dist/
+# Frontend build output is COMMITTED so the notebook installer and offline
+# zips work without a local Node toolchain (rebuild with `make build`).
 
 # Vendored Databricks CLI zip (fetched via `make fetch-cli`)
 vendor/
