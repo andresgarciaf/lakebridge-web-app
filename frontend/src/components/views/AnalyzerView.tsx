@@ -51,6 +51,7 @@ export function AnalyzerView() {
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [generateJson, setGenerateJson] = useState(false)
   const [debug, setDebug] = useState(false)
   const { lines, running, exitCode, results, start, reset } = useRun('analyzer')
 
@@ -71,6 +72,7 @@ export function AnalyzerView() {
         '--report-file',
         `${job.output_dir}/analysis-report.xlsx`,
       ]
+      if (generateJson) args.push('--generate-json', 'true')
       if (debug) args.push('--debug')
       start(args, job.job_id)
     } catch (err) {
@@ -84,6 +86,7 @@ export function AnalyzerView() {
     setDialect(DIALECTS[0])
     setFiles([])
     setUploadError(null)
+    setGenerateJson(false)
     setDebug(false)
     reset()
   }
@@ -108,6 +111,11 @@ export function AnalyzerView() {
         </p>
       </div>
 
+      <Checkbox
+        checked={generateJson}
+        onChange={setGenerateJson}
+        label="Also generate a JSON report alongside the Excel report"
+      />
       <Checkbox checked={debug} onChange={setDebug} label="Show debug output" />
 
       {uploadError && <p className="mt-3 text-sm text-red-600">{uploadError}</p>}

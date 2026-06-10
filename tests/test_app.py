@@ -66,6 +66,23 @@ def test_upload_saves_files(client, monkeypatch, tmp_path):
     assert (tmp_path / data["job_id"] / "output").is_dir()
 
 
+def test_upload_prunes_old_jobs(client, monkeypatch, tmp_path):
+    import os
+
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path)
+    stale = tmp_path / "deadbeef0000"
+    stale.mkdir()
+    old = app_module.time.time() - 48 * 3600
+    os.utime(stale, (old, old))
+    resp = client.post(
+        "/api/upload",
+        data={"files": [(io.BytesIO(b"SELECT 1;"), "q.sql")]},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 200
+    assert not stale.exists()
+
+
 def test_upload_without_files_400(client):
     resp = client.post("/api/upload", data={}, content_type="multipart/form-data")
     assert resp.status_code == 400

@@ -2,9 +2,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from configparser import ConfigParser
 from pathlib import Path
@@ -379,11 +381,10 @@ def diagnostics():
                 if (labs_venv / "pyvenv.cfg").exists()
                 else None
             ),
-            "transpilers": (
-                sorted(p.name for p in transpilers_dir.iterdir())
-                if transpilers_dir.is_dir()
-                else []
-            ),
+            "transpilers": {
+                p.parent.parent.name: (json.loads(p.read_text()).get("version", "?"))
+                for p in sorted(transpilers_dir.glob("*/state/version.json"))
+            },
         }
     )
 
@@ -501,11 +502,26 @@ def profiler_configure():
     return jsonify({"ok": True})
 
 
+def _prune_old_jobs(max_age_hours: int = 24) -> None:
+    # Containers are long-lived between deployments; without pruning, uploads
+    # and outputs accumulate until the disk fills.
+    if not JOBS_DIR.is_dir():
+        return
+    cutoff = time.time() - max_age_hours * 3600
+    for job_dir in JOBS_DIR.iterdir():
+        try:
+            if job_dir.is_dir() and job_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(job_dir, ignore_errors=True)
+        except OSError:
+            continue
+
+
 @app.post("/api/upload")
 def upload():
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "no files provided"}), 400
+    _prune_old_jobs()
     job_id = uuid.uuid4().hex[:12]
     input_dir = JOBS_DIR / job_id / "input"
     output_dir = JOBS_DIR / job_id / "output"
@@ -530,16 +546,22 @@ def upload():
     )
 
 
-def _workspace_cli(args: list[str]) -> None:
-    proc = subprocess.run(
-        [str(CLI_PATH), *args],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=cli_env(),
-    )
-    if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or proc.stdout).strip())
+def _workspace_cli(args: list[str], attempts: int = 3) -> None:
+    last_error = ""
+    for attempt in range(attempts):
+        proc = subprocess.run(
+            [str(CLI_PATH), *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=cli_env(),
+        )
+        if proc.returncode == 0:
+            return
+        last_error = (proc.stderr or proc.stdout).strip()
+        if attempt < attempts - 1:
+            time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(last_error)
 
 
 def _export_results(job_id: str, base_dir: str = RESULTS_WORKSPACE_DIR) -> dict[str, Any] | None:
