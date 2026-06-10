@@ -204,7 +204,11 @@ def status():
 UC_CATALOG = "lakebridge"
 UC_SCHEMA_PRIVILEGES = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_VOLUME", "SELECT", "MODIFY"]
 UC_SCHEMAS = ["analyzer", "profiler", "converter", "reconciler"]
-UC_VOLUMES = [("converter", "switch"), ("converter", "morpheus_bb")]
+UC_VOLUMES = [
+    ("converter", "switch"),
+    ("converter", "morpheus_bb"),
+    ("reconciler", "reconcile_volume"),
+]
 # Switch stages uploads here; reconcile metadata lands in lakebridge.reconciler.
 UC_SWITCH_SCHEMA = "converter"
 UC_SWITCH_VOLUME = "switch"
