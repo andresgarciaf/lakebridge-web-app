@@ -45,7 +45,10 @@ def main() -> None:
             catalog=params["target_catalog"],
             schema=params["target_schema"],
         ),
-        metadata_config=ReconcileMetadataConfig(),
+        # Reconcile metadata lives in the app's standard catalog layout.
+        metadata_config=ReconcileMetadataConfig(
+            catalog="lakebridge", schema="reconciler", volume="reconcile_volume"
+        ),
     )
     ctx.installation.save(config)
     print(f"Saved reconcile config to {ctx.installation.install_folder()}/reconcile.yml", flush=True)

@@ -219,7 +219,12 @@ def test_uc_status_all_ok(client, monkeypatch):
     data = client.get("/api/uc-status").get_json()
     assert data["ok"] is True
     assert data["fix_sql"] == []
-    assert len(data["items"]) == 5
+    # catalog + 4 schemas + 2 volumes
+    assert len(data["items"]) == 7
+    assert {i["name"] for i in data["items"] if i["type"] == "volume"} == {
+        "lakebridge.converter.switch",
+        "lakebridge.converter.morpheus_bb",
+    }
 
 
 def test_uc_status_missing_objects_produces_fix_sql(client, monkeypatch):

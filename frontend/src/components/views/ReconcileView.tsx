@@ -118,7 +118,7 @@ export function ReconcileView() {
         <h2 className="text-base font-semibold text-slate-900 mb-1">1. Configure & deploy</h2>
         <p className="text-sm text-slate-500 mb-4">
           Deploys the lakebridge Reconciliation job, metadata tables
-          (<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">remorph.reconcile</code>),
+          (<code className="text-xs bg-slate-100 px-1 py-0.5 rounded">lakebridge.reconciler</code>),
           and dashboards. Non-Databricks sources connect through an existing Unity Catalog
           (Lakehouse Federation) connection.
         </p>
@@ -204,7 +204,7 @@ export function ReconcileView() {
         <h2 className="text-base font-semibold text-slate-900 mb-1">3. Run</h2>
         <p className="text-sm text-slate-500 mb-4">
           Triggers the Reconciliation job and waits for it to finish. Results land in the
-          <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">remorph.reconcile</code>
+          <code className="mx-1 text-xs bg-slate-100 px-1 py-0.5 rounded">lakebridge.reconciler</code>
           metadata tables and the deployed dashboards.
         </p>
         <div className="flex items-center gap-4">

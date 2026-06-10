@@ -200,14 +200,14 @@ def status():
         )
 
 
+# Standard Unity Catalog layout provisioned for the app.
 UC_CATALOG = "lakebridge"
-UC_SCHEMAS = {
-    "switch": ["USE_SCHEMA", "CREATE_TABLE", "SELECT", "MODIFY"],
-    "analyzer": ["USE_SCHEMA", "CREATE_TABLE", "SELECT", "MODIFY"],
-    "transpile": ["USE_SCHEMA", "CREATE_TABLE", "SELECT", "MODIFY"],
-}
-UC_VOLUME_SCHEMA = "switch"
-UC_VOLUME = "switch_volume"
+UC_SCHEMA_PRIVILEGES = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_VOLUME", "SELECT", "MODIFY"]
+UC_SCHEMAS = ["analyzer", "profiler", "converter", "reconciler"]
+UC_VOLUMES = [("converter", "switch"), ("converter", "morpheus_bb")]
+# Switch stages uploads here; reconcile metadata lands in lakebridge.reconciler.
+UC_SWITCH_SCHEMA = "converter"
+UC_SWITCH_VOLUME = "switch"
 
 
 def _uc_cli(args: list[str]) -> tuple[bool, str]:
@@ -226,10 +226,8 @@ def _app_principal() -> str:
     return os.environ.get("DATABRICKS_CLIENT_ID", "")
 
 
-def _probe_volume_write() -> bool:
-    probe = (
-        f"dbfs:/Volumes/{UC_CATALOG}/{UC_VOLUME_SCHEMA}/{UC_VOLUME}/.lakebridge-app-probe"
-    )
+def _probe_volume_write(schema: str, volume: str) -> bool:
+    probe = f"dbfs:/Volumes/{UC_CATALOG}/{schema}/{volume}/.lakebridge-app-probe"
     ok, _ = _uc_cli(["fs", "mkdir", probe])
     if ok:
         _uc_cli(["fs", "rm", "-r", probe])
@@ -275,7 +273,7 @@ def uc_status():
             ["USE_CATALOG"],
         )
     ]
-    for schema, required in UC_SCHEMAS.items():
+    for schema in UC_SCHEMAS:
         items.append(
             _check_uc_object(
                 "schema",
@@ -283,20 +281,21 @@ def uc_status():
                 ["schemas", "get", f"{UC_CATALOG}.{schema}"],
                 ["schemas", "create", schema, UC_CATALOG],
                 lambda s=schema: _uc_cli(["tables", "list", UC_CATALOG, s])[0],
-                required,
+                UC_SCHEMA_PRIVILEGES,
             )
         )
-    volume_full = f"{UC_CATALOG}.{UC_VOLUME_SCHEMA}.{UC_VOLUME}"
-    items.append(
-        _check_uc_object(
-            "volume",
-            volume_full,
-            ["volumes", "read", volume_full],
-            ["volumes", "create", UC_CATALOG, UC_VOLUME_SCHEMA, UC_VOLUME, "MANAGED"],
-            _probe_volume_write,
-            ["READ_VOLUME", "WRITE_VOLUME"],
+    for schema, volume in UC_VOLUMES:
+        volume_full = f"{UC_CATALOG}.{schema}.{volume}"
+        items.append(
+            _check_uc_object(
+                "volume",
+                volume_full,
+                ["volumes", "read", volume_full],
+                ["volumes", "create", UC_CATALOG, schema, volume, "MANAGED"],
+                lambda s=schema, v=volume: _probe_volume_write(s, v),
+                ["READ_VOLUME", "WRITE_VOLUME"],
+            )
         )
-    )
 
     fix_sql: list[str] = []
     for item in items:

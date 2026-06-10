@@ -50,7 +50,7 @@ const ENGINE_DIRS: Record<Engine, string> = {
 }
 
 // Standard locations provisioned by the UC prerequisites check.
-const UC = { catalog: 'lakebridge', schema: 'switch', volume: 'switch_volume' }
+const UC = { catalog: 'lakebridge', schema: 'converter', volume: 'switch' }
 const DEFAULT_MODEL = 'databricks-claude-sonnet-4-5'
 
 type DialectOption = { flag: string; prompt: string; choices: string[] }

@@ -115,9 +115,10 @@ true`, which deploys the Switch job to the workspace).
 
 ## Unity Catalog prerequisites
 
-After setup the UI checks (and tries to create) catalog `lakebridge`, schemas
-`switch` / `analyzer` / `transpile`, and volume `lakebridge.switch.switch_volume`,
-then verifies the app service principal can use them with functional probes
+After setup the app checks (and tries to create) the standard layout: catalog
+`lakebridge` with schemas `analyzer`, `profiler`, `converter` (volumes
+`switch` and `morpheus_bb`), and `reconciler` (reconcile metadata), then
+verifies the app service principal can use them with functional probes
 (`GET /api/uc-status`). If anything is missing the UI shows the exact
 CREATE/GRANT SQL for an admin to run, with a recheck button; Analyzer and
 standard conversion work without UC access.
