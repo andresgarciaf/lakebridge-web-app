@@ -191,7 +191,8 @@ def run_lineage(run_id: str) -> dict[str, Any]:
     node_rows = sql(
         f"""SELECT object, lower(action), COUNT(DISTINCT source_file), SUM(cnt)
             FROM {CATALOG}.{SCHEMA}.object_relations
-            WHERE run_id = :run_id GROUP BY object, lower(action)""",
+            WHERE run_id = :run_id GROUP BY object, lower(action)
+            ORDER BY 4 DESC LIMIT 4000""",
         run_param,
     )
     nodes: dict[str, dict[str, Any]] = {}
@@ -202,27 +203,37 @@ def run_lineage(run_id: str) -> dict[str, Any]:
         node["references"] += int(refs or 0)
 
     # A script that reads X and creates/writes Y implies data flow X -> Y,
-    # with the script kept as edge metadata.
+    # with scripts kept as edge metadata. Aggregated server-side (one row per
+    # edge, sample of scripts) so large estates stay under the Statements
+    # API's 25MB inline result cap.
     edge_rows = sql(
-        f"""SELECT r.object, w.object, w.source_file, lower(w.action)
+        f"""SELECT r.object, w.object,
+                   to_json(slice(array_distinct(
+                       collect_list(struct(w.source_file AS file, lower(w.action) AS action))
+                   ), 1, 8)),
+                   COUNT(DISTINCT w.source_file)
             FROM {CATALOG}.{SCHEMA}.object_relations r
             JOIN {CATALOG}.{SCHEMA}.object_relations w
               ON r.run_id = w.run_id AND r.source_file = w.source_file
             WHERE r.run_id = :run_id
               AND lower(r.action) = 'read'
               AND lower(w.action) <> 'read'
-              AND r.object <> w.object""",
+              AND r.object <> w.object
+            GROUP BY r.object, w.object
+            ORDER BY 4 DESC LIMIT 4000""",
         run_param,
     )
-    edges: dict[tuple[str, str], dict[str, Any]] = {}
-    for src, dst, source_file, action in edge_rows:
-        edge = edges.setdefault((src, dst), {"src": src, "dst": dst, "files": []})
-        entry = {"file": source_file, "action": action}
-        if entry not in edge["files"]:
-            edge["files"].append(entry)
+    edges = []
+    for src, dst, files_json, file_count in edge_rows:
+        try:
+            files = json.loads(files_json or "[]")
+        except ValueError:
+            files = []
+        edges.append({"src": src, "dst": dst, "files": files, "file_count": int(file_count or 0)})
+    edges.sort(key=lambda e: (e["src"], e["dst"]))
     return {
         "nodes": sorted(nodes.values(), key=lambda n: -n["references"]),
-        "edges": sorted(edges.values(), key=lambda e: (e["src"], e["dst"])),
+        "edges": edges,
     }
 
 

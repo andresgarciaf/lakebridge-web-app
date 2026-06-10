@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AnalyzerRun } from '../InsightsPanel'
+import { LineageGraph } from '../LineageGraph'
 
 type LineageNode = {
   name: string
@@ -12,6 +13,7 @@ type LineageEdge = {
   src: string
   dst: string
   files: { file: string; action: string }[]
+  file_count: number
 }
 
 type Lineage = { nodes: LineageNode[]; edges: LineageEdge[] }
@@ -107,6 +109,15 @@ export function LineageView() {
         <p className="text-sm text-slate-500">
           No object relations recorded for this run. Run the Analyzer on SQL/ETL sources first.
         </p>
+      )}
+
+      {lineage && lineage.edges.length > 0 && (
+        <LineageGraph
+          nodeNames={lineage.nodes.map((n) => n.name)}
+          edges={lineage.edges}
+          focal={focal}
+          onFocus={setFocal}
+        />
       )}
 
       {lineage && lineage.nodes.length > 0 && !focal && (
@@ -213,8 +224,8 @@ function NeighborColumn({
                       {f.file} <span className="text-slate-400">({f.action})</span>
                     </li>
                   ))}
-                  {e.files.length > 4 && (
-                    <li className="text-xs text-slate-400">+{e.files.length - 4} more script(s)</li>
+                  {e.file_count > 4 && (
+                    <li className="text-xs text-slate-400">+{e.file_count - 4} more script(s)</li>
                   )}
                 </ul>
               </button>

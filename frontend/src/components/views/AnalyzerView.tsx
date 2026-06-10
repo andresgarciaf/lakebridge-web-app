@@ -102,7 +102,7 @@ export function AnalyzerView() {
         '--source-directory',
         job.input_dir,
         '--report-file',
-        `${job.output_dir}/analysis-report.xlsx`,
+        `${job.output_dir}/analysis-report-${job.job_id}.xlsx`,
       ]
       args.push('--generate-json', 'true')
       if (debug) args.push('--debug')

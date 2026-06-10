@@ -179,7 +179,7 @@ export function ConverterView({
               '--output-folder',
               job.output_dir,
               '--error-file-path',
-              `${job.output_dir}/transpile_errors.log`,
+              `${job.output_dir}/transpile-errors-${job.job_id}.log`,
               '--skip-validation',
               'true',
               ...(targetTechOption && targetTech !== 'Select'

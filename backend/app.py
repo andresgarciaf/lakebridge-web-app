@@ -73,27 +73,27 @@ def _clean_line(line: str) -> str:
     return ANSI_RE.sub("", line.rstrip())
 
 
-def _proc_lines(proc: subprocess.Popen, keepalive_seconds: int = 15):
-    # Yields stdout lines; emits None during quiet stretches so SSE streams
-    # can send keepalives (the Apps proxy times out idle connections).
-    lines: queue.Queue[str | None] = queue.Queue()
-
-    def pump():
-        assert proc.stdout is not None
-        for line in iter(proc.stdout.readline, ""):
-            lines.put(line)
-        lines.put(None)
-
-    threading.Thread(target=pump, daemon=True).start()
-    while True:
-        try:
-            line = lines.get(timeout=keepalive_seconds)
-        except queue.Empty:
-            yield None
-            continue
-        if line is None:
-            return
-        yield line
+def _sse_from_queue(events: "queue.Queue[tuple[str, str] | None]", keepalive_seconds: int = 15):
+    # Drains a worker-thread event queue into SSE frames. The worker owns the
+    # subprocess and all completion actions, so a client disconnect (the Apps
+    # proxy times out long streams) never interrupts the run itself.
+    try:
+        while True:
+            try:
+                item = events.get(timeout=keepalive_seconds)
+            except queue.Empty:
+                yield ": keepalive\n\n"
+                continue
+            if item is None:
+                return
+            kind, payload = item
+            if kind == "data":
+                yield f"data: {payload}\n\n"
+            else:
+                yield f"event: {kind}\ndata: {payload}\n\n"
+    except GeneratorExit:
+        # Client went away; the worker keeps running to completion.
+        return
 
 _state_lock = threading.Lock()
 _install_state: dict[str, Any] = {
@@ -443,8 +443,9 @@ def _recon_table_config_name(config: dict[str, Any]) -> str:
 
 def _stream_subprocess(cmd: list[str]) -> Response:
     env = cli_env()
+    events: "queue.Queue[tuple[str, str] | None]" = queue.Queue()
 
-    def generate():
+    def worker():
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -453,17 +454,15 @@ def _stream_subprocess(cmd: list[str]) -> Response:
             env=env,
             bufsize=1,
         )
-        try:
-            for line in _proc_lines(proc):
-                if line is None:
-                    yield ": keepalive\n\n"
-                    continue
-                yield f"data: {_clean_line(line)}\n\n"
-        finally:
-            proc.wait()
-            yield f"event: end\ndata: {proc.returncode}\n\n"
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, ""):
+            events.put(("data", _clean_line(line)))
+        proc.wait()
+        events.put(("end", str(proc.returncode)))
+        events.put(None)
 
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+    threading.Thread(target=worker, daemon=True).start()
+    return Response(stream_with_context(_sse_from_queue(events)), mimetype="text/event-stream")
 
 
 @app.get("/api/reconcile/status")
@@ -905,11 +904,13 @@ def _export_profiler_results(tech: str) -> dict[str, Any] | None:
     extracts = sorted(PROFILER_DATA_DIR.glob("*_assessment/profiler_extract.db"))
     if not extracts:
         return None
-    ws_dir = f"{RESULTS_WORKSPACE_BASE}/profiler/{tech}/{uuid.uuid4().hex[:12]}"
+    run_id = uuid.uuid4().hex[:12]
+    ws_dir = f"{RESULTS_WORKSPACE_BASE}/profiler/{tech}/{run_id}"
     _workspace_cli(["workspace", "mkdirs", ws_dir])
     exported = []
     for path in extracts:
-        target = f"{ws_dir}/{path.parent.name}-{path.name}"
+        source_name = path.parent.name.removesuffix("_assessment")
+        target = f"{ws_dir}/profiler-extract-{source_name}-{run_id}.db"
         _workspace_cli(
             ["workspace", "import", target, "--file", str(path), "--format", "AUTO", "--overwrite"]
         )
@@ -961,8 +962,9 @@ def run_command(command: str):
 
     full_args = [*BASE_COMMANDS[command], *extra_args]
     env = cli_env()
+    events: "queue.Queue[tuple[str, str] | None]" = queue.Queue()
 
-    def generate():
+    def worker():
         proc = subprocess.Popen(
             [str(CLI_PATH), *full_args],
             stdout=subprocess.PIPE,
@@ -971,59 +973,60 @@ def run_command(command: str):
             env=env,
             bufsize=1,
         )
+        assert proc.stdout is not None
         saw_error = False
-        try:
-            for line in _proc_lines(proc):
-                if line is None:
-                    yield ": keepalive\n\n"
-                    continue
-                cleaned = _clean_line(line)
-                # lakebridge often exits 0 after logging ERROR lines; track
-                # them so we don't report results for failed LLM runs.
-                if " ERROR [" in cleaned:
-                    saw_error = True
-                yield f"data: {cleaned}\n\n"
-        finally:
-            proc.wait()
-            if proc.returncode == 0 and not (command == "llm-converter" and saw_error):
-                try:
-                    if command == "profiler-run":
-                        tech = _slug(_arg_value(extra_args, "--source-tech") or "unknown")
-                        results = _export_profiler_results(tech)
-                    elif command == "llm-converter":
-                        results = _llm_results(extra_args)
-                    elif job_id:
-                        results = _export_results(job_id, _results_base(command, extra_args))
-                    else:
-                        results = None
-                except Exception as exc:  # noqa: BLE001
-                    yield f"data: Failed to export results to workspace: {exc}\n\n"
+        for line in iter(proc.stdout.readline, ""):
+            cleaned = _clean_line(line)
+            # lakebridge often exits 0 after logging ERROR lines; track them
+            # so we don't report results for failed LLM runs.
+            if " ERROR [" in cleaned:
+                saw_error = True
+            events.put(("data", cleaned))
+        proc.wait()
+        if proc.returncode == 0 and not (command == "llm-converter" and saw_error):
+            try:
+                if command == "profiler-run":
+                    tech = _slug(_arg_value(extra_args, "--source-tech") or "unknown")
+                    results = _export_profiler_results(tech)
+                elif command == "llm-converter":
+                    results = _llm_results(extra_args)
+                elif job_id:
+                    results = _export_results(job_id, _results_base(command, extra_args))
                 else:
-                    if command == "analyzer" and results:
-                        try:
-                            message = history.ingest_analyzer_run(
-                                job_id,
-                                _arg_value(extra_args, "--source-tech") or "unknown",
-                                results["workspace_dir"],
-                                JOBS_DIR / job_id / "output",
+                    results = None
+            except Exception as exc:  # noqa: BLE001
+                events.put(("data", f"Failed to export results to workspace: {exc}"))
+            else:
+                if command == "analyzer" and results:
+                    try:
+                        message = history.ingest_analyzer_run(
+                            job_id,
+                            _arg_value(extra_args, "--source-tech") or "unknown",
+                            results["workspace_dir"],
+                            JOBS_DIR / job_id / "output",
+                        )
+                        events.put(("data", message))
+                    except Exception as exc:  # noqa: BLE001
+                        events.put(("data", f"Run-history ingestion skipped: {exc}"))
+                if results:
+                    if results.get("pending"):
+                        events.put(
+                            (
+                                "data",
+                                f"Results will be saved to {results['workspace_dir']} "
+                                "when the Switch job completes.",
                             )
-                            yield f"data: {message}\n\n"
-                        except Exception as exc:  # noqa: BLE001
-                            yield f"data: Run-history ingestion skipped: {exc}\n\n"
-                    if results:
-                        if results.get("pending"):
-                            yield (
-                                f"data: Results will be saved to {results['workspace_dir']} "
-                                "when the Switch job completes.\n\n"
-                            )
-                        else:
-                            yield f"data: Results available at {results['workspace_dir']}\n\n"
-                        yield f"event: results\ndata: {json.dumps(results)}\n\n"
-                    elif job_id or command == "profiler-run":
-                        yield "data: No output files produced.\n\n"
-            yield f"event: end\ndata: {proc.returncode}\n\n"
+                        )
+                    else:
+                        events.put(("data", f"Results available at {results['workspace_dir']}"))
+                    events.put(("results", json.dumps(results)))
+                elif job_id or command == "profiler-run":
+                    events.put(("data", "No output files produced."))
+        events.put(("end", str(proc.returncode)))
+        events.put(None)
 
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+    threading.Thread(target=worker, daemon=True).start()
+    return Response(stream_with_context(_sse_from_queue(events)), mimetype="text/event-stream")
 
 
 @app.get("/", defaults={"path": ""})
