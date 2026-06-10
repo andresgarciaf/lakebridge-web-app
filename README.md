@@ -45,9 +45,14 @@ make clean     # remove node_modules / dist / .venv / .databricks
 
 ## Install from a notebook (no local tooling)
 
-The easiest install: import `install/install_lakebridge_app.py` into any
-workspace (Workspace → Import → File or URL, e.g. the GitHub raw URL) and run
-it. The notebook fetches the app source from GitHub, downloads the runtime
+The easiest install: in your workspace go to **Workspace → Import → URL** and
+paste:
+
+```
+https://raw.githubusercontent.com/andresgarciaf/lakebridge-web-app/main/install/install_lakebridge_app.py
+```
+
+Then open the imported notebook and run all cells. The notebook fetches the app source from GitHub, downloads the runtime
 binaries (Databricks CLI, Temurin JRE, MS ODBC driver), uploads only the
 required files to your workspace, and creates + deploys the app — no git
 clone, CLI, or Node needed.
