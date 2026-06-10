@@ -38,7 +38,6 @@ RUNTIME_FILES = ("app.yml", "pyproject.toml", "uv.lock")
 # COMMAND ----------
 
 import io
-import json
 import lzma
 import string
 import urllib.request
@@ -48,10 +47,26 @@ from pathlib import PurePosixPath
 PART_SIZE = 9 * 1024 * 1024  # Apps rejects source files >10MB
 
 
+UA = {"User-Agent": "lakebridge-app-installer"}
+
+
 def fetch(url: str, headers: dict | None = None) -> bytes:
-    req = urllib.request.Request(url, headers=headers or {})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return resp.read()
+    req = urllib.request.Request(url, headers={**UA, **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code} fetching {url}") from e
+
+
+def latest_cli_version() -> str:
+    # The release page redirect avoids api.github.com, whose unauthenticated
+    # rate limit (60/hr per IP) is often exhausted on shared egress IPs.
+    req = urllib.request.Request(
+        "https://github.com/databricks/cli/releases/latest", headers=UA
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.url.rsplit("/v", 1)[1]
 
 
 def get_source_zip() -> zipfile.ZipFile:
@@ -161,13 +176,7 @@ if any(f.startswith("vendor/") for f in files):
     print("vendor/ present in source zip — skipping downloads (offline install)")
 else:
     print("Downloading Databricks CLI...")
-    rel = json.loads(
-        fetch(
-            "https://api.github.com/repos/databricks/cli/releases/latest",
-            {"Accept": "application/vnd.github+json"},
-        )
-    )
-    version = rel["tag_name"].lstrip("v")
+    version = latest_cli_version()
     cli = fetch(
         f"https://github.com/databricks/cli/releases/download/v{version}/databricks_cli_{version}_linux_amd64.zip"
     )
