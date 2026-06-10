@@ -251,11 +251,48 @@ except Exception:
 print("Deploying source code...")
 w.apps.deploy_and_wait(app_name=APP_NAME, app_deployment=AppDeployment(source_code_path=target))
 app = w.apps.get(name=APP_NAME)
+SP = app.service_principal_client_id
+
+UC_SCHEMAS = ["analyzer", "profiler", "converter", "reconciler"]
+UC_VOLUMES = [("converter", "switch"), ("converter", "morpheus_bb"), ("reconciler", "reconcile_volume")]
+
+option_a = (
+    f"CREATE CATALOG IF NOT EXISTS lakebridge;\n"
+    f"GRANT USE CATALOG, CREATE SCHEMA ON CATALOG lakebridge TO `{SP}`;"
+)
+option_b_lines = ["CREATE CATALOG IF NOT EXISTS lakebridge;"]
+option_b_lines += [f"CREATE SCHEMA IF NOT EXISTS lakebridge.{s};" for s in UC_SCHEMAS]
+option_b_lines += [f"CREATE VOLUME IF NOT EXISTS lakebridge.{s}.{v};" for s, v in UC_VOLUMES]
+option_b_lines += [f"GRANT USE CATALOG ON CATALOG lakebridge TO `{SP}`;"]
+option_b_lines += [
+    f"GRANT USE SCHEMA, CREATE TABLE, CREATE VOLUME, SELECT, MODIFY ON SCHEMA lakebridge.{s} TO `{SP}`;"
+    for s in UC_SCHEMAS
+]
+option_b_lines += [
+    f"GRANT READ VOLUME, WRITE VOLUME ON VOLUME lakebridge.{s}.{v} TO `{SP}`;" for s, v in UC_VOLUMES
+]
+option_b = "\n".join(option_b_lines)
+
 print(f"\n✅ App deployed: {app.url}")
+print(f"   App service principal: {SP}\n")
+print("=" * 78)
 print(
-    "\nNext steps:\n"
-    f"  1. Open {app.url} — first load runs the in-container setup (CLI, JRE, ODBC, lakebridge).\n"
-    "  2. Grant the app service principal USE CATALOG + CREATE SCHEMA on catalog `lakebridge`\n"
-    f"     (service principal client id: {app.service_principal_client_id}).\n"
-    "  3. The Converter's LLM panel and the Instructions page list any remaining grants."
+    "UNITY CATALOG SETUP — the app uses catalog `lakebridge` with schemas\n"
+    "analyzer / profiler / converter / reconciler and volumes switch,\n"
+    "morpheus_bb, reconcile_volume. The app CREATES these itself on first use\n"
+    "if its service principal has the grants below.\n"
+)
+print("Option A — let the app self-provision (run in a SQL editor):\n")
+print(option_a)
+print(
+    "\nOption B — if you do NOT have permission to create catalogs or grant\n"
+    "privileges, send this block to a workspace admin and ask them to run it\n"
+    "BEFORE the app is used, so all objects exist and the app is granted access:\n"
+)
+print(option_b)
+print("=" * 78)
+print(
+    f"\nNext: open {app.url} — first load runs the in-container setup\n"
+    "(CLI, JRE, ODBC driver, lakebridge). The Converter's LLM panel and the\n"
+    "Instructions page show live Unity Catalog status and any missing grants."
 )
