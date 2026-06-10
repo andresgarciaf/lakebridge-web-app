@@ -232,9 +232,10 @@ def test_uc_status_all_ok(client, monkeypatch):
     data = client.get("/api/uc-status").get_json()
     assert data["ok"] is True
     assert data["fix_sql"] == []
-    # catalog + 4 schemas + 3 volumes
-    assert len(data["items"]) == 8
+    # catalog + 4 schemas + 4 volumes
+    assert len(data["items"]) == 9
     assert {i["name"] for i in data["items"] if i["type"] == "volume"} == {
+        "lakebridge.analyzer.runs",
         "lakebridge.converter.switch",
         "lakebridge.converter.morpheus_bb",
         "lakebridge.reconciler.reconcile_volume",

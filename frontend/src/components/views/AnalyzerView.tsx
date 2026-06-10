@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { FileUpload, ResultsPanel } from '../FileUpload'
+import { InsightsPanel, type AnalyzerRun, type RunInsights } from '../InsightsPanel'
 import { OutputPanel } from '../OutputPanel'
 import { useRun } from '../useRun'
 import { uploadFiles } from '../../runCommand'
@@ -51,9 +52,40 @@ export function AnalyzerView() {
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [generateJson, setGenerateJson] = useState(false)
   const [debug, setDebug] = useState(false)
+  const [runs, setRuns] = useState<AnalyzerRun[]>([])
+  const [selectedRun, setSelectedRun] = useState<string>('')
+  const [insights, setInsights] = useState<RunInsights | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
   const { lines, running, exitCode, results, start, reset } = useRun('analyzer')
+
+  const refreshRuns = useCallback(() => {
+    fetch('/api/analyzer/runs')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setRuns(d.runs ?? []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(refreshRuns, [refreshRuns])
+
+  useEffect(() => {
+    if (!running && exitCode === 0) refreshRuns()
+  }, [running, exitCode, refreshRuns])
+
+  useEffect(() => {
+    if (!selectedRun) {
+      setInsights(null)
+      return
+    }
+    setInsightsLoading(true)
+    fetch(`/api/analyzer/runs/${selectedRun}/insights`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setInsights(d))
+      .catch(() => setInsights(null))
+      .finally(() => setInsightsLoading(false))
+  }, [selectedRun])
+
+  const selected = runs.find((r) => r.run_id === selectedRun) ?? null
 
   const ready = dialect !== 'Select' && files.length > 0
   const busy = running || uploading
@@ -72,7 +104,7 @@ export function AnalyzerView() {
         '--report-file',
         `${job.output_dir}/analysis-report.xlsx`,
       ]
-      if (generateJson) args.push('--generate-json', 'true')
+      args.push('--generate-json', 'true')
       if (debug) args.push('--debug')
       start(args, job.job_id)
     } catch (err) {
@@ -86,14 +118,30 @@ export function AnalyzerView() {
     setDialect(DIALECTS[0])
     setFiles([])
     setUploadError(null)
-    setGenerateJson(false)
     setDebug(false)
     reset()
   }
 
   return (
     <div className="max-w-6xl">
-      <h1 className="text-2xl font-semibold text-slate-900 mb-6">Select code to analyze</h1>
+      <div className="flex items-start justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-slate-900">Select code to analyze</h1>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-slate-600">Previous runs</span>
+          <select
+            value={selectedRun}
+            onChange={(e) => setSelectedRun(e.target.value)}
+            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#1f6feb] max-w-[280px]"
+          >
+            <option value="">{runs.length ? 'Select a run…' : 'No runs yet'}</option>
+            {runs.map((r) => (
+              <option key={r.run_id} value={r.run_id}>
+                {r.run_ts?.slice(0, 16)} · {r.source_tech} · {r.file_count} file(s)
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <div className="mb-6">
         <Label>Dialect</Label>
@@ -114,11 +162,6 @@ export function AnalyzerView() {
         </p>
       </div>
 
-      <Checkbox
-        checked={generateJson}
-        onChange={setGenerateJson}
-        label="Also generate a JSON report alongside the Excel report"
-      />
       <Checkbox checked={debug} onChange={setDebug} label="Show debug output" />
 
       {uploadError && <p className="mt-3 text-sm text-red-600">{uploadError}</p>}
@@ -140,6 +183,7 @@ export function AnalyzerView() {
       </div>
 
       <ResultsPanel results={results} />
+      {selected && <InsightsPanel run={selected} insights={insights} loading={insightsLoading} />}
       <OutputPanel lines={lines} running={running} exitCode={exitCode} />
     </div>
   )

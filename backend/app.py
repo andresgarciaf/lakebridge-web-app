@@ -18,6 +18,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory, stream
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
+from . import history
 from .installer import CLI_PATH, cli_env, ensure_installed, is_installed
 
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
@@ -223,6 +224,7 @@ UC_CATALOG = "lakebridge"
 UC_SCHEMA_PRIVILEGES = ["USE_SCHEMA", "CREATE_TABLE", "CREATE_VOLUME", "SELECT", "MODIFY"]
 UC_SCHEMAS = ["analyzer", "profiler", "converter", "reconciler"]
 UC_VOLUMES = [
+    ("analyzer", "runs"),
     ("converter", "switch"),
     ("converter", "morpheus_bb"),
     ("reconciler", "reconcile_volume"),
@@ -585,6 +587,27 @@ def reconcile_run():
     return _stream_subprocess([str(CLI_PATH), "jobs", "run-now", "--json", payload])
 
 
+@app.get("/api/analyzer/runs")
+def analyzer_runs():
+    try:
+        runs = history.list_runs()
+        for run in runs:
+            run["url"] = f"https://{_workspace_host()}/#workspace{run['workspace_dir']}"
+        return jsonify({"runs": runs})
+    except RuntimeError as exc:
+        return jsonify({"runs": [], "error": str(exc)})
+
+
+@app.get("/api/analyzer/runs/<run_id>/insights")
+def analyzer_run_insights(run_id: str):
+    if not JOB_ID_RE.match(run_id):
+        return jsonify({"error": "invalid run id"}), 400
+    try:
+        return jsonify(history.run_insights(run_id))
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 @app.get("/api/models")
 def list_models():
     ok, out = _uc_cli(["serving-endpoints", "list"])
@@ -927,6 +950,17 @@ def run_command(command: str):
                 except Exception as exc:  # noqa: BLE001
                     yield f"data: Failed to export results to workspace: {exc}\n\n"
                 else:
+                    if command == "analyzer" and results:
+                        try:
+                            message = history.ingest_analyzer_run(
+                                job_id,
+                                _arg_value(extra_args, "--source-tech") or "unknown",
+                                results["workspace_dir"],
+                                JOBS_DIR / job_id / "output",
+                            )
+                            yield f"data: {message}\n\n"
+                        except Exception as exc:  # noqa: BLE001
+                            yield f"data: Run-history ingestion skipped: {exc}\n\n"
                     if results:
                         if results.get("pending"):
                             yield (
