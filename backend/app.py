@@ -534,18 +534,18 @@ def _ensure_recon_job_serverless(job_id: str) -> None:
         }
         converted["environment_key"] = "lakebridge_serverless"
         tasks.append(converted)
-    new_settings = {
-        "job_clusters": [],
-        "environments": [
-            {
-                "environment_key": "lakebridge_serverless",
-                "spec": {"client": "4", "dependencies": wheels},
-            }
-        ],
-        "tasks": tasks,
-    }
+    # Full replacement via jobs reset: a partial update can't detach tasks
+    # from classic compute.
+    settings.pop("job_clusters", None)
+    settings["tasks"] = tasks
+    settings["environments"] = [
+        {
+            "environment_key": "lakebridge_serverless",
+            "spec": {"client": "4", "dependencies": wheels},
+        }
+    ]
     _uc_cli(
-        ["jobs", "update", "--json", json.dumps({"job_id": int(job_id), "new_settings": new_settings})]
+        ["jobs", "reset", "--json", json.dumps({"job_id": int(job_id), "new_settings": settings})]
     )
 
 
